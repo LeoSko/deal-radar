@@ -1,0 +1,11 @@
+{
+  "name": "deal-radar",
+  "version": "1.0.0",
+  "description": "Cross-app food-delivery deal scanner with a live web report",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "test": "node scripts/deals.test.mjs"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "access_token": "<filled in by bin/import-tokens.mjs>",
+  "access_token_expires_at": 0,
+  "refresh_token": "<filled in by bin/import-tokens.mjs>",
+  "endpoints": {
+    "me": "https://restaurant-api.wolt.com/v1/user/me",
+    "addresses": "https://restaurant-api.wolt.com/v2/delivery/info",
+    "promotions": "https://consumer-api.wolt.com/v1/pages/venue-list/promotions-near-you?lon={lon}&lat={lat}",
+    "venue_static": "https://consumer-api.wolt.com/order-xp/web/v1/pages/venue/slug/{venue_id_or_slug}/static",
+    "venue_dynamic": "https://consumer-api.wolt.com/order-xp/web/v1/venue/slug/{venue_slug}/dynamic/?lat={lat}&lon={lon}&selected_delivery_method=homedelivery",
+    "assortment": "https://consumer-api.wolt.com/consumer-api/consumer-assortment/v1/venues/slug/{venue_slug}/assortment",
+    "refresh": "https://authentication.wolt.com/v1/wauth2/access_token"
+  },
+  "work_address": { "alias": "Office", "lat": 0, "lon": 0 }
+}

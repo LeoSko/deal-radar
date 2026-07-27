@@ -1,0 +1,21 @@
+{
+  "base": "https://apinew.foody.com.cy",
+  "components_path": "/v3/data/components",
+  "offers_view": "shop_list.cb_offers",
+  "vertical": "food",
+  "lat": "0",
+  "lng": "0",
+  "headers": {
+    "accept": "application/json, text/plain, */*",
+    "accept-language": "en",
+    "content-type": "application/json",
+    "x-core-installation-id": "<from a logged-in browser request>",
+    "x-core-perseus-client-id": "<from a logged-in browser request>",
+    "x-core-perseus-session-id": "<from a logged-in browser request>",
+    "x-core-platform": "web",
+    "x-core-session-id": "<from a logged-in browser request>",
+    "x-core-theme": "foodyball:light",
+    "x-core-version": "2.112.18",
+    "Referer": "https://www.foody.com.cy/"
+  }
+}

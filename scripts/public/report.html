@@ -1,0 +1,707 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deal Radar — live</title>
+<link rel="icon" type="image/svg+xml" href="/logos/deal-radar.svg">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="/public/vendor/nouislider.min.css">
+<link rel="stylesheet" href="/public/app.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/public/vendor/nouislider.min.js"></script>
+</head>
+<body>
+<a class="skip sr-only" href="#main">Skip to content</a>
+<header>
+  <div class="top">
+    <h1><img class="applogo" src="/logos/deal-radar.svg" alt="">Deal Radar <span class="sub" id="addr">live scan…</span></h1>
+    <div class="btns">
+      <button class="btn" id="rescan" title="Run a fresh scan">↻ Rescan</button>
+      <button class="btn" id="kill" title="Stop the server">⏻ Kill server</button>
+    </div>
+  </div>
+  <div class="addrbar">
+    <span class="ctl-label">Deliver to</span>
+    <span id="presets"></span>
+    <button class="abtn" id="abtn-custom">📍 Custom (map)</button>
+    <span id="addr-coords" class="ctl-label"></span>
+  </div>
+  <div id="mapwrap">
+    <div id="map"></div>
+    <div class="maprow"><span>Drag the pin to your exact spot.</span>
+      <button class="btn" id="map-scan">📍 Scan here</button><span id="map-coords"></span></div>
+  </div>
+  <div class="bar"><i id="barfill"></i></div>
+  <div class="meta">
+    <span><span class="dot" id="dot"></span><span id="status" role="status" aria-live="polite">connecting…</span></span>
+    <span id="count" role="status" aria-live="polite">0 deals</span>
+  </div>
+  <div class="controls toolbar">
+    <div class="searchwrap">
+      <input class="search" id="search" type="search" aria-label="Search dishes and venues" placeholder="🔍 Search dishes, venues…" autocomplete="off">
+      <button class="search-x" id="search-x" type="button" aria-label="Clear search" title="Clear search" style="display:none">✕</button>
+    </div>
+    <details class="filtersdd" id="filtersdd">
+      <summary class="abtn" id="filterssum">⚙️ Filters</summary>
+      <div class="filterspanel">
+        <div class="filters-main">
+          <div class="frow"><span class="flabel">Group</span><div class="fopts" id="f-group"></div></div>
+          <div class="frow"><span class="flabel">Apps</span><div class="fopts" id="f-prov"></div></div>
+          <div class="frow"><span class="flabel">Food</span><div class="fopts" id="f-food"></div></div>
+          <div class="frow"><span class="flabel">Category</span><div class="fopts" id="f-cat"></div></div>
+          <div class="frow"><span class="flabel">Show</span><div class="fopts" id="f-show"></div></div>
+        </div>
+        <div class="sliders">
+          <div class="rng"><div class="rng-head"><span class="l">Price <span class="u">€</span></span>
+            <span class="rng-nums"><input class="rng-num" id="rng-price-num-lo" type="number" inputmode="decimal" aria-label="min price"><span class="rng-dash">–</span><input class="rng-num" id="rng-price-num-hi" type="number" inputmode="decimal" aria-label="max price"></span></div>
+            <div class="rng-slider" id="rng-price-slider" data-lbl="price"></div></div>
+          <div class="rng"><div class="rng-head"><span class="l">Delivery <span class="u">min</span></span>
+            <span class="rng-nums"><input class="rng-num" id="rng-eta-num-lo" type="number" inputmode="numeric" aria-label="min delivery"><span class="rng-dash">–</span><input class="rng-num" id="rng-eta-num-hi" type="number" inputmode="numeric" aria-label="max delivery"></span></div>
+            <div class="rng-slider" id="rng-eta-slider" data-lbl="delivery time"></div></div>
+          <div class="rng"><div class="rng-head"><span class="l">Rating <span class="u">★</span></span>
+            <span class="rng-nums"><input class="rng-num" id="rng-rating-num-lo" type="number" inputmode="decimal" aria-label="min rating"><span class="rng-dash">–</span><input class="rng-num" id="rng-rating-num-hi" type="number" inputmode="decimal" aria-label="max rating"></span></div>
+            <div class="rng-slider" id="rng-rating-slider" data-lbl="rating"></div></div>
+        </div>
+        <div class="clearrow"><button class="btn sm" id="clearfilters" style="display:none">↺ Reset filters</button></div>
+      </div>
+    </details>
+  </div>
+</header>
+<main id="main"><h1 class="sr-only">Food deals</h1><div class="grid" id="grid"></div><div class="empty" id="empty">Waiting for the first deals…</div></main>
+<script>
+const $ = (id) => document.getElementById(id);
+const grid = $('grid'), empty = $('empty');
+const deals = new Map();            // dealKey -> deal (merged across providers)
+let groupBy = 'none';
+const activeCats = new Set();       // empty = all categories — the single filter source;
+                                    // Food-group chips are compound toggles over these
+const activeProvs = new Set();      // empty = all providers
+const activePlus = new Set();       // providers whose "+" (subscription) deals to show exclusively
+const PLUS_LABELS = { wolt:'W+', bolt:'B+', foody:'F+' };
+let providers = [];                 // provider ids in this scan
+const provProgress = {};            // id -> {done,total}
+const provDone = new Set();
+let query = '';                     // fulltext search
+let showDrinks = false;             // drink deals hidden by default; toggle reveals them
+let showAlcohol = false;            // alcohol/spirits hidden by default; toggle reveals them
+// Alcohol detection (client-side, like the category regexes): spirits/wine/beer by name,
+// or an explicit ABV such as "40% Vol". Hidden by default — a €249 brandy isn't a lunch deal.
+const ALCOHOL_RE = /\b(brandy|cognac|whisk(?:e)?y|vodka|\brum\b|\bgin\b|tequila|liqueur|liquor|aperol|campari|vermouth|prosecco|champagne|\bwine\b|merlot|cabernet|sauvignon|chardonnay|rioja|\bsekt\b|\bport\b|sherry|\bale\b|\blager\b|\bbeer\b|\bipa\b|\bstout\b|cider|\braki\b|ouzo|tsipouro|grappa|\bsake\b|bourbon|scotch|μπράντι|κονιάκ|ουίσκι|ουισκι|βότκα|βοτκα|ρούμι|τζιν|τεκίλα|κρασί|κρασι|μπύρα|μπυρα|λικέρ|ρακί|ούζο|τσίπουρο|σαμπάνια|προσέκο)\b/i;
+const ABV_RE = /\d{1,2}(?:[.,]\d)?\s*%\s*(?:vol|abv|alc)/i;
+function isAlcohol(d) {
+  const s = (d.name || '') + ' ' + (d.venue_name || '') + ' ' + (d.headline || '');
+  return ALCOHOL_RE.test(s) || ABV_RE.test(s);
+}
+// Filter option sets, rendered as chips inside the Filters menu.
+const GROUP_OPTS = [['none','None'],['category','Category'],['venuekey','Venue · cross-app'],['venue','Venue (exact)'],['band','Discount band']];
+// dual-range filters: price (€), delivery (min), rating (/10)
+const RKEYS = ['price','eta','rating'];
+const rcfg = {
+  price:  { step:0.5, fmt:v=>'€'+v.toFixed(0), val:d=>d.price_minor!=null?d.price_minor/100:null, dropNull:true },
+  eta:    { step:1,   fmt:v=>v+'m',            val:d=>etaMin(d.eta) },
+  rating: { step:0.1, fmt:v=>'★'+v.toFixed(1), val:d=>d.rating10 },
+};
+const rng = {}; for (const k of RKEYS) rng[k] = { min:0, max:0, lo:0, hi:0, touched:false };
+// Saved delivery addresses, served by /places (config places.json, else the
+// Wolt account's own address book). Populated before the first scan lands.
+const PRESETS = {};
+let chosenAddr = { preset:null, lat:null, lng:null };
+
+// --- color scales (greener = better) ---------------------------------------
+const bandColor = (p) => p>=50 ? '#36d399' : p>=40 ? '#7ee081' : p>=30 ? '#ffd166' : '#f0a868';
+const priceColor = (m) => m==null ? '#e9eaed' : m<=800 ? '#46d39a' : m<=1500 ? '#9ad36b' : m<=2500 ? '#ffd166' : m<=4000 ? '#f0a868' : '#ff6b6b';
+const etaMin = (s) => { const m=String(s||'').match(/\d+/); return m ? +m[0] : null; };
+const etaColor = (s) => { const n=etaMin(s); return n==null ? '#9aa0ab' : n<=15 ? '#46d39a' : n<=25 ? '#9ad36b' : n<=35 ? '#ffd166' : n<=45 ? '#f0a868' : '#ff6b6b'; };
+const ratingColor = (r10) => r10==null ? '#9aa0ab' : r10>=9.6 ? '#46d39a' : r10>=9.2 ? '#9ad36b' : r10>=8.8 ? '#ffd166' : r10>=8.2 ? '#f0a868' : '#ff6b6b';
+const money = (m,c) => m==null ? '?' : new Intl.NumberFormat('en',{style:'currency',currency:c||'EUR'}).format(m/100);
+// Pull a price (minor units) out of a headline like "Freddo Espresso · €4.00".
+const headlineMinor = (h) => { const m=String(h||'').match(/€\s*([\d.,]+)|([\d.,]+)\s*€/); if(!m)return null; const v=parseFloat((m[1]||m[2]).replace(',','.')); return isFinite(v)?Math.round(v*100):null; };
+// Include name+% so multiple offers at one venue (Foody lists many per shop,
+// all sharing the venue URL) stay distinct instead of collapsing to one card.
+const dealKey = (d) => d.provider + '::' + (d.item_url||d.venue_key||'') + '::' + d.name + '::' + d.discount_percentage;
+const PROV_NAMES = { wolt:'Wolt', bolt:'Bolt', foody:'Foody' };  // brand wordmarks
+const provName = (p) => PROV_NAMES[p] || p;
+// real brand logo (served from /logos) + wordmark; logo drops out if it fails to load
+const provBadge = (p) => `<img class="provlogo" src="/logos/${p}.png" alt="" onerror="this.remove()">${provName(p)}`;
+
+// --- category derivation ----------------------------------------------------
+// --- category derivation ----------------------------------------------------
+// Foody ships its own cuisine taxonomy (Greek) per venue - use it directly.
+const FOODY_CAT = {
+  'Πίτσα':'Pizza',
+  'Μπέργκερς':'Burgers','Αμερικάνικη Κουζίνα':'Burgers',
+  'Ασιατικά':'Sushi & Asian','Κινέζικα':'Sushi & Asian','Ιαπωνικά':'Sushi & Asian','Sushi':'Sushi & Asian','Ινδικά':'Sushi & Asian','Ταϊλανδέζικα':'Sushi & Asian',
+  'Τηγανητό κοτόπουλο':'Chicken','Κοτόπουλο':'Chicken',
+  'Ζυμαρικά':'Pasta & Italian','Ιταλική Κουζίνα':'Pasta & Italian','Ιταλικά':'Pasta & Italian',
+  'Σχάρας':'Grill & Souvla','Ψησταριά':'Grill & Souvla','Γύρος':'Grill & Souvla','Μαγειρευτά':'Grill & Souvla','Σουβλάκι':'Grill & Souvla','Κυπριακή Κουζίνα':'Grill & Souvla','Ελληνική Κουζίνα':'Grill & Souvla',
+  'Αραβική Κουζίνα':'Middle Eastern','Λιβανέζικα':'Middle Eastern',
+  'Μεξικάνικα':'Mexican',
+  'Θαλασσινά':'Seafood','Τηγανητό ψάρι':'Seafood','Ψάρι':'Seafood',
+  'Σαλάτα':'Salad & Healthy','Σαλάτες':'Salad & Healthy','Υγιεινά':'Salad & Healthy',
+  'Submarines':'Sandwiches & Wraps','Σάντουιτς':'Sandwiches & Wraps','Σάντουιτσ':'Sandwiches & Wraps',
+  'Brunch':'Breakfast & Brunch','Πρόγευμα':'Breakfast & Brunch','Πρωινό':'Breakfast & Brunch',
+  'Κρέπες':'Dessert & Bakery','Ζαχαροπλαστεία':'Dessert & Bakery','Παγωτό':'Dessert & Bakery','Κεραστικά':'Dessert & Bakery','Αλμυρά':'Dessert & Bakery','Γλυκά':'Dessert & Bakery',
+  'Καφές':'Coffee & Café',
+};
+// Keyword fallback (English + Greek + cuisine + café/brand), specific → generic.
+const CATS = [
+  ['Pizza', /pizza|pizzeria|calzone|focaccia|pinsa|πίτσα|πιτσα/i],
+  ['Sushi & Asian', /sushi|σούσι|σουσι|maki|sashimi|ramen|poke|\bbao\b|\bwok\b|asian|ασιατ|thai|ταϊλαν|noodle|νουντλ|dumpling|gyoza|teriyaki|katsu|\bpho\b|bibimbap|wagamama|hosomaki|nigiri|tempura|chinese|κινέζ|κινεζ|japan|ιαπων|korean|κορεά|vietnam|βιετναμ|\bmiso\b|tikka|korma|\bcurry\b|κάρυ|\bindia|ινδικ|edamame|kimchi|pad thai|tandoor|masala|mirch|biryani|izakaya|\boshi\b|yozen|dragon|mandarin|longzhu|chim chim|\braj\b|chettinad/i],
+  ['Burgers', /burger|μπεργκ|μπέργκ|smash|cheeseburger|patty|whopper|μπιφτέκ|μπιφτεκ|hot ?dog|street dogs/i],
+  ['Chicken', /chicken|κοτόπουλ|κοτοπουλ|wings|φτερούγ|nuggets|ναγκετ|tenders|goujons|popcorn chicken/i],
+  ['Pasta & Italian', /pasta|ζυμαρικ|μακαρόν|μακαρον|carbonara|καρμπονάρ|bolognese|μπολονέζ|penne|rigatoni|lasagn|λαζάν|risotto|ριζότο|gnocchi|spaghetti|σπαγγ|tagliatelle|ravioli|tortellini|\bitalian\b|ιταλ|trattoria|τρατορ/i],
+  ['Grill & Souvla', /kebab|κεμπάπ|grill|σχάρ|σχαρ|ψησταρ|psistaria|\bψητ|gyros|\bgyro\b|γύρο|γυρο|souvla|σουβλ|σεφταλ|sheftalia|κλεφτικ|kleftiko|χοιριν|μπριζόλ|μπριζολ|steak|\bbbq\b|brisket|lyulya|tavern|ταβέρν|μεζέ|\bmeze\b|halloumi|χαλούμ|μαγειρευτ|skepasti|σκεπαστ|θράκα|thraka|τυλιχτ|tylixto|μερακλ|meraklis|καρβουν|karvouno|κουζίν|kouzina|meet ?& ?eat|meat ?& ?eat|asado|georgian|tiflis|achapuri|khinkal|khachapuri|pelmeni|pushkin|berezka/i],
+  ['Middle Eastern', /shawarma|σαουάρμ|σαουαρμ|arabic|αραβικ|lebanese|λιβανέζ|falafel|φαλάφελ|hummus|χούμους|manoushe|μανούς|\bsham\b|homse|zagros|kurdish|persian|περσικ|tahini|kofta|κοφτ|durum|σαμπλούκ|syrian|σύρι|sahten|damaskus|emessa|alsharq|\bcairo\b|halal|habibi|shawa|layalina|nazaret|levant|kilikia|armenian|αρμεν/i],
+  ['Mexican', /taco|τάκο|burrito|μπουρίτο|quesadilla|nachos|νάτσος|mexic|μεξικ|fajita|φαχίτα|guacamole|tex.?mex|armadillo/i],
+  ['Seafood', /seafood|θαλασσιν|\bfish\b|ψάρι|ψαρι|prawn|γαρίδ|γαριδ|shrimp|calamari|καλαμάρ|καλαμαρ|octopus|χταπόδ|mussel|μύδ|salmon|σολομ|\btuna\b|τόνο|lobster|αστακ|ocean basket|fishmarket|ψαραγορ|θαλασσοκ|seablings|gazebo mare/i],
+  ['Salad & Healthy', /salad|σαλάτ|σαλατ|\bbowl\b|\bμπολ\b|quinoa|κινόα|healthy|υγιειν|\bvegan\b|βίγκαν|vegetar|χορτοφ|\bwrap\b|ράπ|avocado|αβοκάντο|\bpoke\b|protein|detox|\bfit\b|fitfork|nutri|wellness|\bnosh\b|foodness|acai|açai|oakberry/i],
+  ['Sandwiches & Wraps', /submarine|sandwich|σάντουιτς|σαντουιτς|\bsub\b|\bsubs\b|baguette|μπαγκέτ|\btoast\b|τοστ|panini|πανίνι|\bpitta?\b|πίτα\b/i],
+  ['Breakfast & Brunch', /brunch|breakfast|πρόγευμ|προγευμ|πρωιν|\beggs?\b|αυγά|αυγα|omelet|ομελέτ|ομελετ|pancake|πανκέικ|granola|γκρανόλα/i],
+  ['Dessert & Bakery', /dessert|γλυκ|ζαχαροπλαστ|παγωτ|gelat|ice cream|κρέπ|κρεπ|crepe|crepa|crepoli|kreppa|waffle|βάφλ|βαφλ|\bcake\b|κέικ|τούρτ|τουρτ|brownie|μπράουν|cookie|μπισκότ|μπισκοτ|donut|ντόνατ|mochi|pastr|croissant|κρουασάν|κρουασαν|φούρνος|φουρν|αρτοπ|μπακλαβ|baklava|λουκουμάδ|μηλόπιτ|chocolate|σοκολάτ|σοκολατ|choco|\bsweet|confection|patisserie|tiramisu|cheesecake|κανταΐφ|τυρόπιτ|σπανακόπιτ|μπουγάτσ|cinnabon|glyko|glyka|γλυκοπωλ|häagen|haagen|bakery|\bbread\b|breadhouse|bagel|καραμελ|karamel|papafilippou/i],
+  ['Coffee & Café', /coffee|καφέ|καφε\b|espresso|εσπρέσο|cappuc|καπουτσ|\blatte\b|λάτε|frappe|φραπέ|φραπε|nescafe|νεσκαφέ|\bmocha\b|μόκα|\bcafe\b|café|caffe|caferesto|coffice|kaffeine|pepcoff|goppion|costadoro|\blounge\b|\bbar\b|\bbeans\b|mikel|μάικελ|\bnero\b|νέρο|starbucks|costa coffee|coffee island|gloria jean|flat white|\btea\b|τσάι|τσαι|matcha|chai|smoothie|σμούθι|\bjuice\b|χυμ|\bboba\b|milkshake|μιλκσέικ|αναψυκτικ|lemonade|λεμονάδ|hojicha|macchiat|gastropub|biergarten|\bpub\b/i],
+];
+function rawCategoryOf(d) {
+  const cu = (d.cuisine || '').trim();
+  if (cu && FOODY_CAT[cu] && FOODY_CAT[cu] !== 'Other') return FOODY_CAT[cu];
+  const s = (d.name + ' ' + (d.venue_name||'') + ' ' + (d.headline||'') + ' ' + cu).toLowerCase();
+  for (const [name, re] of CATS) if (re.test(s)) return name;
+  return 'Other';
+}
+// Category emoji + the coarse Fast/Healthy grouping above them. Static here — the
+// derivation above owns which names can appear, this owns how they're presented.
+const CAT_EMOJI = {
+  'Pizza':'🍕','Burgers':'🍔','Sushi & Asian':'🍣','Chicken':'🍗','Pasta & Italian':'🍝',
+  'Grill & Souvla':'🥙','Middle Eastern':'🧆','Mexican':'🌮','Seafood':'🦐','Salad & Healthy':'🥗',
+  'Sandwiches & Wraps':'🥪','Breakfast & Brunch':'🍳','Dessert & Bakery':'🍰','Coffee & Café':'☕','Other':'🍽️',
+};
+const FOOD_GROUPS = [
+  { id:'fast', label:'Fast food', emoji:'🍟', cats:['Pizza','Burgers','Chicken','Mexican','Sandwiches & Wraps','Dessert & Bakery'] },
+  { id:'healthy', label:'Healthy food', emoji:'🥗', cats:['Sushi & Asian','Pasta & Italian','Grill & Souvla','Middle Eastern','Seafood','Salad & Healthy','Breakfast & Brunch'] },
+];
+const CAT_GROUP = new Map();        // category name -> group id
+for (const g of FOOD_GROUPS) for (const c of g.cats) CAT_GROUP.set(c, g.id);
+const groupCats = (gid) => (FOOD_GROUPS.find(g => g.id === gid) || {}).cats || [];
+const foodGroupOf = (d) => CAT_GROUP.get(categoryOf(d)) || '';
+// Cross-provider inheritance: a Bolt venue-name-only deal ("Tiflis") inherits the
+// category derived for the same venue on Foody/Wolt (joined by venue_key).
+let _venueCat = new Map();
+function buildVenueCats() {
+  _venueCat = new Map();
+  for (const d of deals.values()) { const c = rawCategoryOf(d); if (c !== 'Other' && d.venue_key && !_venueCat.has(d.venue_key)) _venueCat.set(d.venue_key, c); }
+}
+function categoryOf(d) {
+  const c = rawCategoryOf(d);
+  if (c !== 'Other') return c;
+  return (d.venue_key && _venueCat.get(d.venue_key)) || 'Other';
+}
+function bandLabel(p) { const lo = Math.floor(p/10)*10; return lo>=50 ? '50%+' : lo+'-'+(lo+9)+'%'; }
+// Cross-app key: server venue_key (normalized 2-word name) when present, else compute
+// the SAME normalization from the venue name.
+const normVenueKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean).slice(0, 2).join(' ');
+function groupKey(d) {
+  if (groupBy === 'venuekey') return d.venue_key || normVenueKey(d.venue_name || d.name) || '-';
+  if (groupBy === 'venue') return d.venue_name || d.name || '-';
+  if (groupBy === 'band') return bandLabel(d.discount_percentage);
+  return categoryOf(d);  // 'category'
+}
+const sortDeals = (a,b) =>
+  ((b.discount_percentage||0)-(a.discount_percentage||0)) ||
+  ((b.is_plus?1:0)-(a.is_plus?1:0)) ||
+  ((b.rating10||0)-(a.rating10||0)) ||
+  ((a.price_minor??1e9)-(b.price_minor??1e9));
+// Auto-scan (--json) Wolt deals carry is_wolt_plus but not the unified is_plus, which the
+// W+ chip/partition key off. Normalize on ingest so W+ shows even from a non-stream scan.
+function normalizeDeal(d) { if (d && d.is_wolt_plus && !d.is_plus) { d.is_plus = true; if (!d.plus_label) d.plus_label = PLUS_LABELS[d.provider] || '+'; } return d; }
+
+function passesRanges(d) {
+  for (const k of RKEYS) { const r = rng[k]; if (!r.touched) continue;
+    const v = rcfg[k].val(d);
+    if (v == null) { if (rcfg[k].dropNull) return false; continue; }  // unknown: drop if this dim needs a value (price), else keep
+    if (v < r.lo - 1e-9 || v > r.hi + 1e-9) return false; }
+  return true;
+}
+function visibleList() {
+  let list = [...deals.values()];
+  if (!showDrinks) list = list.filter(d => !d.is_drink);       // drink deals hidden until toggled on
+  if (!showAlcohol) list = list.filter(d => !isAlcohol(d));    // alcohol/spirits hidden until toggled on
+  // Provider/"+" chips partition each app into regular vs subscription buckets;
+  // selection is a UNION. So "Wolt" = Wolt non-plus, "W+" = Wolt plus; pick
+  // Wolt+W+ for all Wolt, or just "Foody" to get Foody without F+. Empty = all.
+  if (activeProvs.size || activePlus.size) list = list.filter(d =>
+    (!d.is_plus && activeProvs.has(d.provider)) || (d.is_plus && activePlus.has(d.provider)));
+  // Categories are the single filter; the Food-group chips only bulk-toggle them.
+  if (activeCats.size) list = list.filter(d => activeCats.has(categoryOf(d)));
+  if (query) list = list.filter(d => ((d.name||'')+' '+(d.venue_name||'')+' '+(d.headline||'')+' '+categoryOf(d)).toLowerCase().includes(query));
+  list = list.filter(passesRanges);
+  return list.sort(sortDeals);
+}
+
+// Recompute each slider's data bounds; untouched sliders track the bounds (inert).
+function computeBounds() {
+  for (const k of RKEYS) { const r = rng[k]; let mn = Infinity, mx = -Infinity;
+    for (const d of deals.values()) { const v = rcfg[k].val(d); if (v == null) continue; mn = Math.min(mn, v); mx = Math.max(mx, v); }
+    if (!isFinite(mn)) { mn = 0; mx = k==='rating'?10:k==='eta'?60:50; }
+    const st = rcfg[k].step; mn = Math.floor(mn/st)*st; mx = Math.ceil(mx/st)*st;
+    if (mx <= mn) mx = mn + st;
+    if (!r.touched) { r.min = mn; r.max = mx; r.lo = mn; r.hi = mx; }
+    // A touched slider is the user's explicit choice — never let a rescan move it.
+    // Keep lo/hi verbatim and widen the track bounds to contain both the data and
+    // the user's selection so the handles stay valid without shifting.
+    else { r.min = Math.min(mn, r.lo); r.max = Math.max(mx, r.hi); }
+  }
+}
+// Render a boundary as a plain number for the keyboard inputs (1 decimal for
+// sub-unit steps like rating/price, integer otherwise), trimming a trailing ".0".
+const fmtNum = (k, v) => (+v).toFixed(rcfg[k].step < 1 ? 1 : 0).replace(/\.0$/, '');
+// Dual-range sliders are noUiSlider instances (vendored, dependency-free).
+const _sliders = {};
+let _rngRenderTimer = 0;   // trailing debounce for mid-drag grid re-renders
+function syncRanges() {
+  for (const k of RKEYS) { const r = rng[k], s = _sliders[k];
+    if (s) {
+      // noUiSlider rejects min === max — pad a degenerate range by one step.
+      const max = r.max > r.min ? r.max : r.min + (rcfg[k].step || 1);
+      s.updateOptions({ range: { min: r.min, max }, step: rcfg[k].step }, false);
+      s.set([r.lo, r.hi], false);
+    }
+    // keyboard-editable numeric boundaries; never clobber the one being typed in
+    const nlo = $('rng-'+k+'-num-lo'), nhi = $('rng-'+k+'-num-hi');
+    nlo.min = nhi.min = r.min; nlo.max = nhi.max = r.max; nlo.step = nhi.step = rcfg[k].step;
+    if (document.activeElement !== nlo) nlo.value = fmtNum(k, r.lo);
+    if (document.activeElement !== nhi) nhi.value = fmtNum(k, r.hi);
+  }
+}
+function setupRanges() {
+  for (const k of RKEYS) {
+    const el = $('rng-'+k+'-slider'), r = rng[k], lbl = el.dataset.lbl || k;
+    _sliders[k] = noUiSlider.create(el, {
+      start: [r.lo || 0, r.hi || 1], connect: true, step: rcfg[k].step,
+      range: { min: r.min || 0, max: r.max > r.min ? r.max : (r.min || 0) + 1 },
+      handleAttributes: [{ 'aria-label': 'Minimum ' + lbl }, { 'aria-label': 'Maximum ' + lbl }],
+    });
+    // 'slide' covers drag + keyboard; sync state and the numeric boxes live, but
+    // debounce the (expensive) grid re-render so the handle never stutters —
+    // 'change' fires on release and paints the final state immediately.
+    _sliders[k].on('slide', (vals) => {
+      rng[k].lo = +vals[0]; rng[k].hi = +vals[1]; rng[k].touched = true;
+      const nlo = $('rng-'+k+'-num-lo'), nhi = $('rng-'+k+'-num-hi');
+      if (document.activeElement !== nlo) nlo.value = fmtNum(k, rng[k].lo);
+      if (document.activeElement !== nhi) nhi.value = fmtNum(k, rng[k].hi);
+      clearTimeout(_rngRenderTimer); _rngRenderTimer = setTimeout(render, 150);
+    });
+    _sliders[k].on('change', () => { clearTimeout(_rngRenderTimer); render(); });
+    // numeric boundary inputs: commit on change/Enter (not per-keystroke), clamped to bounds
+    const nlo = $('rng-'+k+'-num-lo'), nhi = $('rng-'+k+'-num-hi');
+    const commit = (e) => {
+      let a = nlo.value === '' ? r.min : +nlo.value, b = nhi.value === '' ? r.max : +nhi.value;
+      if (!isFinite(a)) a = r.min; if (!isFinite(b)) b = r.max;
+      a = Math.min(Math.max(a, r.min), r.max); b = Math.min(Math.max(b, r.min), r.max);
+      if (a > b) { if (e && e.target === nlo) b = a; else a = b; }
+      r.lo = a; r.hi = b; r.touched = true; syncRanges(); scheduleRender(); };
+    nlo.addEventListener('change', commit); nhi.addEventListener('change', commit);
+    const onKey = (e) => { if (e.key === 'Enter') { commit(e); e.target.blur(); } };
+    nlo.addEventListener('keydown', onKey); nhi.addEventListener('keydown', onKey);
+  }
+}
+// Coalesce rapid filter changes (slider drag, streaming cards) into one render per
+// frame so the grid doesn't thrash/flicker.
+let rafPending = false;
+function scheduleRender() { if (rafPending) return; rafPending = true; requestAnimationFrame(() => { rafPending = false; render(); }); }
+
+// Parse one card/header's html into a single DOM node.
+function htmlToNode(html) { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; }
+// Keyed reconcile: make container's children match `items` (each {key, html}),
+// reusing nodes whose html is unchanged (so their <img>s never reload), rebuilding
+// only those whose html differs, creating/removing the rest, and reordering in place.
+function reconcile(container, items) {
+  const byKey = new Map();
+  for (const n of container.children) byKey.set(n.dataset.rkey, n);
+  const desired = new Set(items.map(it => it.key));
+  for (const [k, n] of byKey) if (!desired.has(k)) { n.remove(); byKey.delete(k); }
+  // Place each desired node in order, reading the reference node LIVE each step
+  // (after any replace) so positions never go stale — only out-of-place nodes move.
+  let prev = null;
+  for (const it of items) {
+    let node = byKey.get(it.key);
+    if (!node) { node = htmlToNode(it.html); node.dataset.rkey = it.key; node._html = it.html; }
+    else if (node._html !== it.html) {
+      const fresh = htmlToNode(it.html); fresh.dataset.rkey = it.key; fresh._html = it.html;
+      node.replaceWith(fresh); node = fresh; byKey.set(it.key, node);
+    }
+    const ref = prev ? prev.nextSibling : container.firstChild;
+    if (node !== ref) container.insertBefore(node, ref);
+    prev = node;
+  }
+}
+
+function render() {
+  saveFilters();
+  computeBounds(); syncRanges();
+  buildVenueCats();
+  const list = visibleList();
+  empty.style.display = list.length ? 'none' : 'block';
+  if (!list.length) {
+    // distinguish "nothing scanned yet" from "everything filtered out"
+    empty.innerHTML = deals.size === 0
+      ? 'Waiting for the first deals…'
+      : 'No deals match your filters. <button type="button" class="linkbtn" onclick="clearFilters()">Clear filters</button>';
+  }
+  const anyFilter = activeCats.size || activeProvs.size || activePlus.size || query || showDrinks || showAlcohol || RKEYS.some(k=>rng[k].touched);
+  $('count').textContent = list.length + ' deal' + (list.length===1?'':'s') + (anyFilter ? ' (filtered)' : '');
+  $('clearfilters').style.display = anyFilter ? '' : 'none';
+  renderChips();
+  // Build the desired [key,html] sequence, then reconcile it into the grid so a
+  // streaming scan only touches the cards that actually changed — existing cards
+  // (and their images) stay put instead of the whole grid being rebuilt each frame.
+  let items;
+  if (groupBy === 'none') {
+    items = list.map(d => ({ key: 'c:'+dealKey(d), html: card(d) }));
+  } else {
+    const groups = new Map();
+    for (const d of list) { const g = groupKey(d); (groups.get(g) || groups.set(g,[]).get(g)).push(d); }
+    // order: cross-app groups first (when grouping by venue), then by best discount
+    const provs = (ds) => new Set(ds.map(d=>d.provider));
+    const ordered = [...groups.entries()].sort((a,b) => {
+      if (groupBy==='venuekey') { const ca=provs(a[1]).size>1, cb=provs(b[1]).size>1; if (ca!==cb) return cb-ca; }
+      return (b[1][0].discount_percentage||0) - (a[1][0].discount_percentage||0);
+    });
+    items = [];
+    for (const [g, ds] of ordered) {
+      items.push({ key: 'h:'+groupBy+':'+g, html: groupHeader(g, ds) });
+      for (const d of ds) items.push({ key: 'c:'+dealKey(d), html: card(d) });
+    }
+  }
+  reconcile(grid, items);
+}
+
+function groupHeader(g, ds) {
+  // For cross-app venue groups, show a per-provider compare with the better
+  // rating highlighted — the "join same venue, find the better offer" view.
+  if (groupBy === 'venuekey') {
+    const byProv = {};
+    for (const d of ds) { const p=d.provider; if (!byProv[p] || d.discount_percentage>byProv[p].discount_percentage) byProv[p]=d; }
+    const ps = Object.keys(byProv);
+    const cross = ps.length > 1;
+    const bestR = Math.max(...ds.map(d=>d.rating10||0));
+    const title = byProv.wolt?.venue_name || ds.find(d=>d.venue_name)?.venue_name || ds[0].name;
+    const vs = ps.map(p => { const d=byProv[p]; const win = (d.rating10||0)===bestR && cross;
+      return `<span class="${win?'win':''}"><span class="prov ${p}">${provBadge(p)}</span> <b>${d.discount_percentage}%</b>${d.rating10!=null?' ★'+d.rating10.toFixed(1):''}</span>`; }).join('');
+    return `<h2 class="group-h ${cross?'cross':''}">${esc(title)} <span class="gn">${ds.length}</span><span class="vs">${vs}</span></h2>`;
+  }
+  const gLabel = groupBy === 'category' ? (CAT_EMOJI[g] || '🍽️') + ' ' + esc(g) : esc(g);
+  return `<h2 class="group-h">${gLabel} <span class="gn">${ds.length}</span></h2>`;
+}
+
+// Fill the Filters-menu sections (all chips) + the Filters button's active badge.
+function renderChips() {
+  // Group (single-select)
+  $('f-group').innerHTML = GROUP_OPTS.map(o =>
+    `<button type="button" class="chip${o[0]===groupBy?' on':''}" data-group="${o[0]}">${esc(o[1])}</button>`).join('');
+  // Apps + "+" subscription (multi-select); counts partition non-plus vs plus deals
+  const pc = {}, plusC = {};
+  for (const d of deals.values()) { if (d.is_plus) plusC[d.provider]=(plusC[d.provider]||0)+1; else pc[d.provider]=(pc[d.provider]||0)+1; }
+  const provHtml = providers.filter(p=>pc[p]||plusC[p]).map(p => {
+    const base = pc[p] ? `<button type="button" class="chip ${p}${activeProvs.has(p)?' on':''}" data-prov="${p}">${provBadge(p)}<span class="n">${pc[p]}</span></button>` : '';
+    const plus = plusC[p] ? `<button type="button" class="chip ${p} plus${activePlus.has(p)?' on':''}" data-plus="${p}" aria-label="${provName(p)}+ (subscription) deals (${plusC[p]})" title="${provName(p)}+ (subscription) deals"><img class="provlogo" src="/logos/${p}.png" alt="" onerror="this.remove()">+<span class="n">${plusC[p]}</span></button>` : '';
+    return base + plus;
+  }).join('');
+  $('f-prov').innerHTML = provHtml || '<span class="muted">No providers yet</span>';
+  // Category counts first — the Food-group chips derive their tri-state from them.
+  const counts = new Map();
+  for (const d of deals.values()) { const c = categoryOf(d); counts.set(c, (counts.get(c)||0)+1); }
+  const cats = [...counts.keys()].sort((a,b) => counts.get(b)-counts.get(a));
+  // Food groups: compound toggles over their member categories. on = every present
+  // member active; partial = some; hovering highlights the members (see CSS .hl).
+  const gc = {};
+  for (const d of deals.values()) { const g = foodGroupOf(d); if (g) gc[g] = (gc[g]||0)+1; }
+  $('f-food').innerHTML = FOOD_GROUPS.map(g => {
+    const present = g.cats.filter(c => counts.has(c));
+    const on = present.length > 0 && present.every(c => activeCats.has(c));
+    const partial = !on && present.some(c => activeCats.has(c));
+    return `<button type="button" class="chip${on?' on':partial?' partial':''}" data-food="${esc(g.id)}" title="Toggle every ${esc(g.label)} category">${esc(g.emoji)} ${esc(g.label)}${gc[g.id]?`<span class="n">${gc[g.id]}</span>`:''}</button>`;
+  }).join('');
+  $('f-cat').innerHTML = cats.length ? cats.map(c =>
+    `<button type="button" class="chip${activeCats.has(c)?' on':''}" data-cat="${esc(c)}">${CAT_EMOJI[c]||'🍽️'} ${esc(c)}<span class="n">${counts.get(c)}</span></button>`).join('')
+    : '<span class="muted">No categories yet</span>';
+  // Show (drinks + alcohol toggles)
+  let nDrinks = 0, nAlc = 0; for (const d of deals.values()) { if (d.is_drink) nDrinks++; if (isAlcohol(d)) nAlc++; }
+  $('f-show').innerHTML =
+    `<button type="button" class="chip${showDrinks?' on':''}" data-show="drinks">🥤 Drinks${nDrinks?`<span class="n">${nDrinks}</span>`:''}</button>`
+    + `<button type="button" class="chip${showAlcohol?' on':''}" data-show="alcohol" title="Spirits, wine and beer — hidden by default">🍷 Alcohol${nAlc?`<span class="n">${nAlc}</span>`:''}</button>`;
+  // Filters button badge: number of active filter selections (group/search excluded)
+  const nActive = activeProvs.size + activePlus.size + activeCats.size
+    + (showDrinks?1:0) + (showAlcohol?1:0) + RKEYS.filter(k=>rng[k].touched).length;
+  $('filterssum').innerHTML = '⚙️ Filters' + (nActive ? ` <span class="n">${nActive}</span>` : '');
+}
+
+function card(d) {
+  const href = d.item_url || d.venue_url || '';
+  const img = d.image
+    ? `<div class="thumb" data-preview="${esc(d.image)}" role="button" tabindex="0" title="Click to enlarge" aria-label="Enlarge photo of ${esc(d.name)}" style="background-image:url('${d.image}')">`
+    : `<div class="thumb"><span class="noimg">🍽️</span>`;
+  const chain = d._chain_count ? ` ·  +${d._chain_count-1} more` : '';
+  const addon = d.mandatory_addon_minor ? ` · +${money(d.mandatory_addon_minor,d.currency)} req` : '';
+  // Always show the original (full) price struck through when there's a discount %.
+  // Derive it from the shown price when the feed carried no explicit original.
+  const pct = d.discount_percentage || 0;
+  const shownMinor = d.price_minor!=null ? d.price_minor : headlineMinor(d.headline);
+  const origMinor = d.original_minor!=null ? d.original_minor
+    : (pct>0 && pct<100 && shownMinor!=null ? Math.round(shownMinor/(1-pct/100)) : null);
+  const wasHtml = origMinor!=null ? `<span class="was">${money(origMinor,d.currency)}</span>` : '';
+  const priceHtml = d.price_minor!=null
+    ? `<span class="price" style="color:${priceColor(d.price_minor)}">${money(d.price_minor,d.currency)}</span>${wasHtml}${addon?`<span class="was" style="text-decoration:none">${addon}</span>`:''}`
+    : `<span class="price" style="font-size:13px;color:#b6bbc4">${d.headline?esc(d.headline):'menu deal'}</span>${wasHtml}`;
+  const plus = (d.is_plus || d.is_wolt_plus) ? `<span class="wp ${d.provider}" role="img" aria-label="${provName(d.provider)}+ subscription deal" title="${provName(d.provider)}+ subscription deal"><img class="provlogo" src="/logos/${d.provider}.png" alt="" onerror="this.remove()">+</span>` : '';
+  // Venue-level deals (Bolt: whole-menu discount, no dish) render consistently:
+  // venue name as the title, a "Whole-menu deal" subtitle, and no price row.
+  const subtitle = d.venue_level
+    ? `<div class="venue">Whole-menu deal</div>`
+    : `<div class="venue">${esc(d.venue_name||'')}${chain}</div>`;
+  // venue-level has no price, but keep an empty .row — it carries margin-top:auto,
+  // the spacer that anchors the rating/eta to the bottom like every other card.
+  const rowHtml = d.venue_level ? `<div class="row"></div>` : `<div class="row">${priceHtml}</div>`;
+  return `<div class="card">
+    ${img}
+      <span class="pct" style="background:${bandColor(pct)}">${pct}% off</span>
+      ${plus}
+    </div>
+    <div class="body">
+      <div class="badges-row"><span class="prov ${d.provider}">${provBadge(d.provider)}</span></div>
+      <div class="name">${esc(d.name)}</div>
+      ${subtitle}
+      ${rowHtml}
+      <div class="sub2">
+        ${d.rating10!=null?`<span class="chip2" style="color:${ratingColor(d.rating10)}">★ ${d.rating10.toFixed(1)}</span>`:''}
+        ${d.eta?`<span class="chip2" style="color:${etaColor(d.eta)}">${esc(d.eta)}</span>`:''}
+      </div>
+      ${href?`<div class="cardactions"><a class="btn sm" style="flex:1;text-align:center" href="${href}" target="_blank" rel="noopener">Open in ${provName(d.provider)} ↗<span class="sr-only"> (opens in new tab)</span></a></div>`:''}
+    </div></div>`;
+}
+function esc(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// --- filter persistence (localStorage, per browser) -------------------------
+const FKEY = 'deal_radar_filters';
+let _lastSaved = '';
+function saveFilters() {
+  try {
+    const s = JSON.stringify({
+      provs: [...activeProvs], plus: [...activePlus], cats: [...activeCats],
+      q: query, drinks: showDrinks, alcohol: showAlcohol, groupBy,
+      rng: Object.fromEntries(RKEYS.map(k => [k, [rng[k].lo, rng[k].hi, rng[k].touched]])),
+    });
+    if (s === _lastSaved) return; _lastSaved = s;   // only write when something changed
+    localStorage.setItem(FKEY, s);
+  } catch (e) { /* storage unavailable */ }
+}
+function restoreFilters() {
+  let s; try { s = JSON.parse(localStorage.getItem(FKEY) || 'null'); } catch (e) { s = null; }
+  if (!s) return;
+  (s.provs||[]).forEach(x => activeProvs.add(x));
+  (s.plus||[]).forEach(x => activePlus.add(x));
+  (s.cats||[]).forEach(x => activeCats.add(x));
+  if (typeof s.q === 'string') { query = s.q; $('search').value = s.q; updSearchX(); }
+  if (typeof s.drinks === 'boolean') showDrinks = s.drinks;
+  if (typeof s.alcohol === 'boolean') showAlcohol = s.alcohol;
+  if (s.groupBy) groupBy = s.groupBy;
+  if (s.rng) for (const k of RKEYS) { const r = s.rng[k]; if (r) { rng[k].lo = r[0]; rng[k].hi = r[1]; rng[k].touched = !!r[2]; } }
+}
+
+// --- controls --------------------------------------------------------------
+// All filter controls live as chips inside one "⚙️ Filters" menu. A single
+// delegated handler on the (static) panel routes every chip click; stopPropagation
+// on the whole panel keeps the menu open while you interact.
+$('filtersdd').querySelector('.filterspanel').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const chip = e.target.closest('.chip'); if (!chip) return;
+  e.preventDefault();
+  const ds = chip.dataset;
+  if (ds.group != null) { groupBy = ds.group; render(); }
+  else if (ds.prov != null) { const k = ds.prov; activeProvs.has(k) ? activeProvs.delete(k) : activeProvs.add(k); render(); }
+  else if (ds.plus != null) { const k = ds.plus; activePlus.has(k) ? activePlus.delete(k) : activePlus.add(k); render(); }
+  else if (ds.cat != null) { const k = ds.cat; activeCats.has(k) ? activeCats.delete(k) : activeCats.add(k); render(); }
+  else if (ds.food != null) {
+    // Compound toggle: all of the group's present categories active → clear them;
+    // otherwise activate them all. Per-category clicks then read back as "partial".
+    const pres = new Set(); for (const d of deals.values()) pres.add(categoryOf(d));
+    const members = groupCats(ds.food).filter(c => pres.has(c));
+    const all = members.length > 0 && members.every(c => activeCats.has(c));
+    members.forEach(c => all ? activeCats.delete(c) : activeCats.add(c));
+    render();
+  }
+  else if (ds.show != null) {
+    if (ds.show === 'drinks') showDrinks = !showDrinks; else showAlcohol = !showAlcohol;
+    render();
+  }
+});
+// Hovering a Food-group chip pulses its member category chips, previewing what
+// the compound toggle is about to flip.
+document.addEventListener('mouseover', (e) => {
+  const b = e.target.closest && e.target.closest('[data-food]');
+  if (!b) return;
+  const cats = new Set(groupCats(b.dataset.food));
+  document.querySelectorAll('#f-cat .chip').forEach(ch => { if (cats.has(ch.dataset.cat)) ch.classList.add('hl'); });
+});
+document.addEventListener('mouseout', (e) => {
+  if (e.target.closest && e.target.closest('[data-food]'))
+    document.querySelectorAll('#f-cat .chip.hl').forEach(ch => ch.classList.remove('hl'));
+});
+// Fullscreen image preview (lightbox) for card thumbnails. Capture phase so the
+// click never reaches the card's own controls; Esc is likewise stopped before the
+// Filters-menu handler below sees it.
+function preview(url) {
+  const ov = document.createElement('div');
+  ov.className = 'imgview';
+  ov.innerHTML = `<img src="${esc(url)}" alt=""><button class="imgview-x" aria-label="close">✕</button>`;
+  const shut = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); shut(); } };
+  ov.addEventListener('click', shut);
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(ov);
+}
+document.addEventListener('click', (e) => {
+  const p = e.target.closest && e.target.closest('[data-preview]');
+  if (!p) return;
+  e.preventDefault(); e.stopPropagation();
+  preview(p.dataset.preview);
+}, true);
+document.addEventListener('keydown', (e) => {
+  const p = e.target.closest && e.target.closest('[data-preview]');
+  if (!p || (e.key !== 'Enter' && e.key !== ' ')) return;
+  e.preventDefault(); preview(p.dataset.preview);
+});
+// Search + inline clear (✕).
+const searchX = $('search-x');
+function updSearchX() { searchX.style.display = $('search').value ? '' : 'none'; }
+$('search').addEventListener('input', (e) => { query = e.target.value.trim().toLowerCase(); updSearchX(); scheduleRender(); });
+searchX.onclick = () => { const si = $('search'); si.value = ''; query = ''; updSearchX(); si.focus(); render(); };
+// Close the Filters menu on an outside click or Esc (panel clicks stopPropagation above).
+document.addEventListener('click', (e) => { const dd = $('filtersdd'); if (dd && dd.open && !dd.contains(e.target)) dd.open = false; });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { const dd = $('filtersdd'); if (dd) dd.open = false; } });
+// One-click escape from any filter combo (incl. a stale price range that drops
+// null-priced deals) back to the full list.
+function clearFilters() {
+  activeCats.clear(); activeProvs.clear(); activePlus.clear();
+  query = ''; $('search').value = ''; updSearchX();
+  showDrinks = false; showAlcohol = false;
+  for (const k of RKEYS) rng[k].touched = false;
+  render();
+}
+$('clearfilters').onclick = clearFilters;
+setupRanges();
+restoreFilters();
+
+function updateProgress() {
+  let acc = 0;
+  for (const p of providers) acc += provDone.has(p) ? 1 : (provProgress[p]?.total ? provProgress[p].done/provProgress[p].total : 0);
+  $('barfill').style.width = (providers.length ? Math.round(acc/providers.length*100) : 0) + '%';
+  const parts = providers.map(p => provDone.has(p) ? `${p} ✓` : (provProgress[p] ? `${p} ${provProgress[p].done}/${provProgress[p].total}` : `${p} …`));
+  const allDone = provDone.size >= providers.length && providers.length;
+  if (allDone) { $('dot').classList.add('done'); $('status').textContent = 'complete · ' + parts.join(' · '); rescanBtn.classList.remove('spin'); rescanBtn.textContent='↻ Rescan'; }
+  else { $('status').textContent = 'scanning… ' + parts.join(' · '); }
+}
+
+// --- SSE -------------------------------------------------------------------
+const es = new EventSource('/events');
+es.onmessage = (e) => {
+  const ev = JSON.parse(e.data);
+  const prov = ev._provider;
+  if (ev.type === 'reset') { providers = ev.providers||[]; if (ev.coords) syncAddress(ev.coords); resetUI(); }
+  // Header subtitle: the address the user picked, when we can name it; the
+  // provider's own label (raw coords for a map pin) otherwise.
+  else if (ev.type === 'start') { if (prov==='wolt'||providers[0]===prov) $('addr').textContent = presetLabel() || ev.address; updateProgress(); }
+  else if (ev.type === 'deal') { if (!provDone.has(prov)) { ev.deal.provider = ev.deal.provider||prov; deals.set(dealKey(normalizeDeal(ev.deal)), ev.deal); scheduleRender(); } }
+  else if (ev.type === 'progress') { provProgress[prov] = {done:ev.done, total:ev.total}; updateProgress(); }
+  else if (ev.type === 'done') {
+    for (const k of [...deals.keys()]) if (deals.get(k).provider===prov) deals.delete(k);  // drop live, swap to canonical
+    for (const d of (ev.deals||[])) { d.provider = d.provider||prov; deals.set(dealKey(normalizeDeal(d)), d); }
+    provDone.add(prov); render(); updateProgress();
+  }
+  else if (ev.type === 'server' && ev.state === 'killed') { es.close(); markStopped('server stopped'); }
+};
+es.onerror = () => {};  // EventSource auto-reconnects
+
+function resetUI() {
+  deals.clear(); provDone.clear(); for (const k in provProgress) delete provProgress[k];
+  $('barfill').style.width = '0%'; $('dot').classList.remove('done'); $('status').textContent = 'scanning…';
+  rescanBtn.classList.remove('spin'); rescanBtn.textContent = '↻ Rescan';
+  render();
+}
+
+// --- buttons ---------------------------------------------------------------
+const killBtn = $('kill'), rescanBtn = $('rescan');
+killBtn.onclick = async () => {
+  killBtn.disabled = true; killBtn.textContent = 'stopping…';
+  try { await fetch('/kill', { method: 'POST' }); } catch {}
+  markStopped('server stopped');
+};
+rescanBtn.onclick = () => rescanAt(chosenAddr.lat, chosenAddr.lng);
+function markStopped(msg) {
+  killBtn.disabled = true; killBtn.textContent = '■ stopped';
+  rescanBtn.disabled = true;
+  $('dot').classList.add('done');
+  $('status').textContent = msg;
+}
+
+// --- delivery address (presets + draggable map) ----------------------------
+function rescanAt(lat, lng) {
+  rescanBtn.classList.add('spin'); rescanBtn.textContent = '↻ rescanning…';
+  fetch('/rescan?lat=' + lat + '&lon=' + lng, { method: 'POST' }).catch(() => {});
+}
+// Server-chosen launch address (from serve.mjs reset event) → highlight the
+// matching preset so the picker + rescans track what was actually scanned.
+function syncAddress(c) {
+  const la = c.lat, lo = c.lon ?? c.lng;
+  if (la == null || lo == null) return;
+  const near = (a, b) => Math.abs(a - b) < 0.002;
+  let preset = 'custom';
+  for (const p in PRESETS) if (near(PRESETS[p].lat, la) && near(PRESETS[p].lng, lo)) preset = p;
+  chosenAddr = { preset, lat: la, lng: lo };
+  document.querySelectorAll('.abtn[data-preset]').forEach(x => x.classList.toggle('on', x.dataset.preset === preset));
+  $('addr-coords').textContent = preset === 'custom' ? ('📍 ' + la.toFixed(4) + ', ' + lo.toFixed(4)) : '';
+}
+const presetLabel = () => (document.querySelector('.abtn[data-preset].on') || {}).textContent || '';
+function renderPresets(places) {
+  const host = $('presets');
+  host.innerHTML = '';
+  for (const p of places) {
+    PRESETS[p.id] = { lat: p.lat, lng: p.lng };
+    const b = document.createElement('button');
+    b.className = 'abtn'; b.dataset.preset = p.id; b.textContent = p.label;
+    b.onclick = () => {
+      chosenAddr = { preset: p.id, ...PRESETS[p.id] };
+      document.querySelectorAll('.abtn').forEach(x => x.classList.remove('on'));
+      b.classList.add('on'); $('addr-coords').textContent = ''; $('mapwrap').style.display = 'none';
+      rescanAt(chosenAddr.lat, chosenAddr.lng);
+    };
+    host.appendChild(b);
+  }
+  if (chosenAddr.lat != null) syncAddress(chosenAddr);   // re-highlight once buttons exist
+  else if (places.length) chosenAddr = { preset: places[0].id, ...PRESETS[places[0].id] };
+}
+fetch('/places').then(r => r.json()).then(renderPresets).catch(() => {});
+let map = null, marker = null;
+$('abtn-custom').onclick = () => {
+  const w = $('mapwrap'), show = w.style.display !== 'block';
+  w.style.display = show ? 'block' : 'none';
+  document.querySelectorAll('.abtn').forEach(x => x.classList.remove('on'));
+  $('abtn-custom').classList.toggle('on', show);
+  if (show) initMap();
+};
+function initMap() {
+  if (map) { setTimeout(() => map.invalidateSize(), 30); return; }
+  const c = chosenAddr.lat != null ? [chosenAddr.lat, chosenAddr.lng] : [0, 0];
+  map = L.map('map', { zoomControl: true }).setView(c, chosenAddr.lat != null ? 15 : 2);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    { maxZoom: 19, attribution: '© OpenStreetMap, © CARTO' }).addTo(map);
+  marker = L.marker(c, { draggable: true }).addTo(map);
+  const upd = () => { const p = marker.getLatLng(); $('map-coords').textContent = '📍 ' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5); };
+  marker.on('move', upd); map.on('click', e => marker.setLatLng(e.latlng)); upd();
+  setTimeout(() => map.invalidateSize(), 60);
+}
+$('map-scan').onclick = () => {
+  const p = marker.getLatLng(); chosenAddr = { preset: 'custom', lat: +p.lat.toFixed(6), lng: +p.lng.toFixed(6) };
+  $('addr-coords').textContent = '📍 ' + chosenAddr.lat.toFixed(4) + ', ' + chosenAddr.lng.toFixed(4);
+  rescanAt(chosenAddr.lat, chosenAddr.lng);
+};
+render();
+</script>
+</body></html>

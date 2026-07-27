@@ -1,0 +1,4 @@
+[
+  { "id": "home",   "label": "🏠 Home",   "lat": 52.5200, "lng": 13.4050 },
+  { "id": "office", "label": "🏢 Office", "lat": 52.5069, "lng": 13.3762 }
+]

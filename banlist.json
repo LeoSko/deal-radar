@@ -1,0 +1,31 @@
+{
+  "food_product_lines": ["restaurant"],
+  "non_food_substrings": [
+    "sauce", "sauces", "dip", "dips", "dressing", "syrup", "topping",
+    "water", "still water", "sparkling water", "mineral water", "san pellegrino",
+    "candy", "chocolate bar", "chewing gum", "gum",
+    "chips bag", "crisps",
+    "cigarette", "tobacco",
+    "napkin", "cutlery", "straw", "bag",
+    "side", "add-on", "extra cheese", "extra sauce",
+    "ice cream scoop", "ice", "ice cubes"
+  ],
+  "non_food_strict": [
+    "tap water", "still water", "sparkling water",
+    "san pellegrino", "perrier", "evian"
+  ],
+  "non_food_venue_tags": [
+    "clothing", "fashion", "shoes", "accessories", "jewelry", "watches",
+    "pharmacy", "drugstore", "cosmetics", "beauty", "perfume", "skincare",
+    "pet supply", "pet shop", "pet food", "pet care",
+    "electronics", "books", "stationery", "toys", "hobby",
+    "flowers", "florist", "candles", "gifts", "handmade", "home decor", "household", "furniture",
+    "hardware", "tools", "automotive",
+    "tobacco", "vape", "smoking"
+  ],
+  "non_food_venue_name_substrings": [
+    "wiggle", "sex shop", "adult store", "pleasure", "lingerie",
+    "luxury brands", "fashion outlet", "boutique",
+    "flowers", "florist", "balloons", "supplements"
+  ]
+}

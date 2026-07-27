@@ -1,0 +1,4 @@
+{
+  "refresh_token": "<from food.bolt.eu — see README>",
+  "city_slug": "<the city segment of your food.bolt.eu URL, e.g. berlin>"
+}
