@@ -21,28 +21,47 @@ Node 18+. No dependencies.
 git clone <this repo> ~/deal-radar && cd ~/deal-radar
 ```
 
-Credentials live in `~/.config/deal-radar/`, never in the repo. Wolt is the one
-that carries most of the weight, so start there:
+None of these apps has a public API, so there is no API key to issue yourself.
+What you do instead is lift the credentials your own browser is already using.
+Same pattern for all three:
 
-1. Open [wolt.com](https://wolt.com) logged in, F12 → Console, run:
-   ```js
-   JSON.stringify({ wtoken:  document.cookie.match(/__wtoken=([^;]+)/)[1],
-                    wrtoken: document.cookie.match(/__wrtoken=([^;]+)/)?.[1] })
-   ```
-2. `node bin/import-tokens.mjs '<paste that>'`
-3. `node bin/set-address.mjs --auto` — picks which saved delivery address is the default target.
+```bash
+node bin/capture.mjs wolt          # prints the steps + a console snippet
+# …run it in the browser, it copies to your clipboard…
+node bin/import-tokens.mjs wolt '<paste>'
+```
 
-The access token lasts ~30 minutes and renews itself; the refresh token lasts
-months. When it finally dies the scanner says so and you redo step 1.
+`capture.mjs` prints the snippet; `import-tokens.mjs` validates the paste and
+writes it to `~/.config/deal-radar/<provider>_auth.json`, `chmod 600`. Nothing
+lands in the repo.
 
-Bolt and Foody are optional. Copy the matching file out of `config/` into
-`~/.config/deal-radar/` (dropping `.example`) and fill it in:
+**Do the capture in a private / incognito window.** A browser keeps one session
+per site, so logging in again elsewhere to grab a token can invalidate the one
+you already saved — and ordinary browsing in that same tab rotates tokens under
+you. Incognito gives the capture its own session; close it when you're done.
 
-- **Bolt** needs a `refresh_token` and your city slug. The header comment in
-  `scripts/bolt.mjs` has a console one-liner that copies a ready-made
-  `--set-refresh` command to your clipboard.
-- **Foody** needs the `x-core-*` session headers from any logged-in request in
-  the network tab. They are session-bound, so expect to re-grab them.
+Wolt is the one that carries most of the weight, so start there. After importing:
+
+```bash
+node bin/set-address.mjs --auto    # which saved address is the default target
+```
+
+Its access token lasts ~30 minutes and renews itself; the refresh token lasts
+months. When that finally dies the scanner says so and you re-capture.
+
+**Bolt** (`node bin/capture.mjs bolt`) — browse to your city first, so the URL
+looks like `/en/<city>/…`. The snippet reads the refresh token out of Bolt's
+obfuscated localStorage blob *and* the city slug out of that URL, which is what
+venue links are built from. If you were on the home page it'll say so; pass
+`--city <slug>` yourself in that case. The token is good for about a year.
+
+**Foody** (`node bin/capture.mjs foody`) — there is no token here at all; the
+credential is one logged-in session's `x-core-*` headers. The snippet hooks
+`fetch`/`XHR`, waits for the page to make its own API call, then pops a green
+button that copies the whole thing. If no button shows up, click a Sorting
+option or a category — not a restaurant — to make the page fire a request. The
+import refuses a paste without `x-core-session-id`, because a guest session
+silently hides every Foody+ deal. Expect to redo this one occasionally.
 
 Delivery-address buttons come from your Wolt address book by default. To label
 them yourself, drop a `places.json` next to the auth files — see

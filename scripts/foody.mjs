@@ -213,6 +213,10 @@ async function main() {
   const auth = JSON.parse(await readFile(AUTH_PATH, "utf8"));
   if (opts.lat) auth.lat = opts.lat;
   if (opts.lon) auth.lng = opts.lon;  // override coords for the chosen address
+  // The capture snippet only picks up coords if the captured request carried
+  // them; otherwise the caller (the report's address picker, or --lat/--lon)
+  // has to say where to look.
+  if (!auth.lat || !auth.lng) throw new Error("Foody: no coordinates — pass --lat/--lon, or add lat/lng to " + AUTH_PATH);
   const venues = await loadVenues(auth);
   const top = venues.slice(0, opts.scanLimit);
   const emit = opts.stream ? (o) => process.stdout.write(JSON.stringify(o) + "\n") : null;

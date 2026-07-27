@@ -42,11 +42,13 @@ function parseArgs() {
 }
 
 // Persist a freshly-captured refresh token (long-lived ~1yr). Re-capture is rare
-// (token expiry / logout). Grab it from the logged-in food.bolt.eu tab — it's in
-// localStorage["mmkv_9$a_store_9$a_persist:root"], react-native-MMKV-obfuscated
-// (XOR each char with 24); the JWT with a `jti` claim + multi-day exp is it:
-//   copy("node bolt.mjs --set-refresh '" + (()=>{const dec=s=>{let o="";for(let i=0;i<s.length;i++)o+=String.fromCharCode(s.charCodeAt(i)^24);return o;};const d=dec(localStorage["mmkv_9$a_store_9$a_persist:root"]);return (d.match(/eyJ[\w-]+\.eyJ[\w-]+\.[\w-]+/g)||[]).find(t=>{try{const p=JSON.parse(atob(t.split(".")[1].replace(/-/g,"+").replace(/_/g,"/")));return p.exp-p.iat>86400;}catch{return false;}});})() + "'")
-// then paste the copied command into a terminal:
+// (token expiry / logout). Bolt keeps its tokens XOR-obfuscated (react-native-MMKV)
+// in localStorage["mmkv_9$a_store_9$a_persist:root"]; the JWT with a multi-day
+// exp is the refresh bearer. To grab it, in a PRIVATE window logged in to
+// food.bolt.eu, on a /en/<city>/… URL:
+//   node bin/capture.mjs bolt              # prints the console snippet
+//   node bin/import-tokens.mjs bolt '<paste>'
+// That path also stores city_slug. This flag takes a bare token and nothing else:
 //   node bolt.mjs --set-refresh eyJ...
 async function setRefreshToken(tok) {
   const exp = jwtExp(tok);
@@ -191,7 +193,7 @@ async function fetchLocation(auth) {
 async function loadHome(opts) {
   const auth = await readAuth();
   if (!auth.refresh_token) {
-    process.stderr.write("Bolt: no refresh_token in bolt_auth.json — capture one: node bolt.mjs --set-refresh eyJ...\n");
+    process.stderr.write("Bolt: no refresh_token in bolt_auth.json — capture one: node bin/capture.mjs bolt\n");
     return { auth, stale: true };
   }
   if (!auth.city_slug) throw new Error(`Set "city_slug" in ${AUTH_PATH} (the slug in your food.bolt.eu URL).`);

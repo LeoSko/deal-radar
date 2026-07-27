@@ -18,7 +18,7 @@
 //   node deals.mjs                        # promotions endpoint + scan top-N venues
 //   node deals.mjs --no-scan              # promotions endpoint only
 //   node deals.mjs --scan-limit 50        # max total venues to scan (default 150)
-//   node deals.mjs --lat 34.69 --lon 33.07
+//   node deals.mjs --lat 52.52 --lon 13.40
 //   node deals.mjs --min-discount 30      # default 30 (with fallback to --floor)
 //   node deals.mjs --floor 15             # hard floor if nothing meets --min-discount (default 15)
 //   node deals.mjs --limit 25             # rows to print (default 100)

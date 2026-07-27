@@ -1,2 +1,4 @@
 node_modules/
+
+# aislop tool cache / baselines
 .aislop/

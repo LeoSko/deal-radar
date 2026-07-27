@@ -8,7 +8,16 @@ description: Find truly good food-delivery deals across Wolt, Bolt Food, and Foo
 Finds discounted food across **Wolt + Bolt Food + Foody**, deliverable to the user's saved address.
 
 All three providers' credentials live in `~/.config/deal-radar/` (`wolt_auth.json`,
-`bolt_auth.json`, `foody_auth.json`) — see `README.md` for how to capture them.
+`bolt_auth.json`, `foody_auth.json`). To (re)capture any of them:
+
+```bash
+node ~/.claude/skills/deal-radar/bin/capture.mjs <wolt|bolt|foody>   # steps + console snippet
+node ~/.claude/skills/deal-radar/bin/import-tokens.mjs <provider> '<paste>'
+```
+
+**Tell the user to run the capture snippet in a private / incognito window** —
+one session per site means grabbing a token in the normal window can invalidate
+the saved one, and later browsing there rotates it.
 
 ## When to use
 
@@ -88,8 +97,9 @@ The viewer scans **multiple delivery apps in parallel** and merges them:
   stable `deviceId`/`session_id`, mints a ~1h access token, and derives
   coords + `city_id` from the account's saved delivery address
   (`getDeliveryLocation`) — so changing your address in the app just works.
-  Re-grab a refresh token only on logout/expiry: `node bolt.mjs --set-refresh eyJ...`
-  (the copy-paste browser-console grabber is in `bolt.mjs`'s header comment).
+  Re-grab only on logout/expiry (~yearly): `bin/capture.mjs bolt` then
+  `bin/import-tokens.mjs bolt '<paste>'`. That snippet takes `city_slug` from the
+  `/en/<city>/…` URL you run it on; `--city <slug>` overrides.
   Bolt **item-level** deals need the auth-gated venue-menu endpoint (not yet
   captured — grab one `/p/<slug>` menu call from a logged-in browser to add it).
 - **Foody** — `foody.mjs` (**item-level** deals from foody.com.cy = efood/Delivery
@@ -97,9 +107,11 @@ The viewer scans **multiple delivery apps in parallel** and merges them:
   then each venue's public `/v3/shops/catalog` is scanned for the real
   `category.offers[]` — the actual discounted **item + price** (the venue badge
   like "1+1" is too coarse — often just a coffee BOGO). Auth = `x-core-*` session
-  headers in `~/.config/deal-radar/foody_auth.json` (session-bound — re-grab from a logged-in
-  browser when calls fail). `--scan-limit` caps
-  venues scanned (default 60). Venue URL: `/delivery/<city>/<slug>`.
+  headers in `~/.config/deal-radar/foody_auth.json` (session-bound — re-grab with
+  `bin/capture.mjs foody` when calls fail; the import rejects a paste with no
+  `x-core-session-id`, which is a guest session and hides every Foody+ deal).
+  Coordinates come from `--lat/--lon` (the report always passes them).
+  `--scan-limit` caps venues scanned (default 60). Venue URL: `/delivery/<city>/<slug>`.
 
 Both emit the same unified deal shape (`provider`, `rating10` normalized to /10,
 `venue_key` for joining) and the same `--stream` NDJSON events. Add a new app
@@ -226,8 +238,8 @@ from the promotions response's `city_data`.
 - **"No current deals here"** with `--no-scan` → real-world condition,
   Wolt's promotions page is empty for these coords/right now. Re-run later
   without `--no-scan`.
-- **`Refresh failed`** → refresh token expired. Re-paste cookies (see
-  `README.md`).
+- **`Refresh failed`** → Wolt refresh token expired. Re-capture:
+  `bin/capture.mjs wolt` → `bin/import-tokens.mjs wolt '<paste>'`.
 - **Wrong tier (no Wolt+ flag)** → some venues set `show_wolt_plus` at venue
   level, others mark `is_wolt_plus_only` per item. The scanner checks both.
   Use `--json` to inspect.
