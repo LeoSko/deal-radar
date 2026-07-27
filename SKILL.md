@@ -128,12 +128,23 @@ Provider toggles: `--no-wolt` / `--no-bolt` / `--no-foody`.
 - Cards stream in during the scan (SSE); on completion the grid swaps to the
   canonical ranked + chain-collapsed set (matches the CLI output).
 - Color-coded price / delivery ETA / venue rating (greener = better).
-- **Group by** Category / **Venue · cross-app** / Venue (exact) / Discount band
-  (default Category). "Venue · cross-app" joins the same venue across apps by
-  `venue_key`, floats venues present on **both** apps to the top with a 🤝 header
-  comparing each app's best discount + rating (better rating highlighted).
-- **Filter** by provider chips (wolt/bolt) and category chips (click to toggle;
-  counts shown). Categories derived client-side from item + venue names.
+- Everything else lives in one **⚙️ Filters** menu, with a badge counting active
+  selections: **Group by** (None / Category / **Venue · cross-app** / Venue
+  (exact) / Discount band), app chips (each app split into regular vs `+`
+  subscription deals — selection is a union), Fast/Healthy food compound chips,
+  per-category chips with counts, and the 🥤 Drinks / 🍷 Alcohol toggles (both
+  off by default). Dual-range sliders for price, delivery time and rating, each
+  with keyboard-editable bounds. Selections persist in `localStorage`.
+- "Venue · cross-app" joins the same venue across apps by `venue_key`, floats
+  venues present on **more than one** app to the top with a 🤝 header comparing
+  each app's best discount + rating (better rating highlighted).
+- Full-text search over dish, venue, headline and category.
+- Click a card photo for a full-screen preview.
+- Delivery-address buttons come from `~/.config/deal-radar/places.json` when
+  present, else the Wolt account's own address book (`GET /places`); the 📍 map
+  picker rescans at an arbitrary pin.
+- Static assets (page, stylesheet, vendored noUiSlider) are served from
+  `scripts/public/`; brand logos from `scripts/logos/`.
 - **↻ Rescan** button (POST `/rescan`) runs a fresh scan without restarting the
   server. **⏻ Kill server** (POST `/kill`) stops it; otherwise it auto-stops
   after `--timeout` minutes (default **60**).
