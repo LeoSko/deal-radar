@@ -1,4 +1,14 @@
 node_modules/
 
+# Personal data, in case anything is pointed at the repo instead of
+# ~/.config/deal-radar: exported order history, tokens, saved places.
+order-history/
+wolt_history.json
+*_auth.json
+!config/*_auth.example.json
+places.json
+telegram.json
+unparsed_promos.jsonl
+
 # aislop tool cache / baselines
 .aislop/
