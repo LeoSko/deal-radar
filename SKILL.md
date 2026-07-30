@@ -183,6 +183,45 @@ credentials, else it's skipped: `--token`/`--chat-id`, `TELEGRAM_BOT_TOKEN` /
 `TELEGRAM_CHAT_ID`, or `{"token": …, "chat_id": …}` in
 `~/.config/deal-radar/telegram.json`.
 
+## Order history export (`wolt-history.mjs` + `/history`)
+
+Wolt's app paginates your past orders and shows one at a time, with no export.
+`scripts/wolt-history.mjs` walks the same endpoints with the captured tokens and
+writes the whole thing to disk:
+
+```bash
+node ~/.claude/skills/deal-radar/scripts/wolt-history.mjs             # → ~/.config/deal-radar/order-history
+node ~/.claude/skills/deal-radar/scripts/wolt-history.mjs --out ~/wolt-dump --rps 1 --concurrency 2
+node ~/.claude/skills/deal-radar/scripts/wolt-history.mjs --refetch   # ignore the per-order cache
+```
+
+- `order-history/wolt_history.json` — `{ meta, orders: [ …summary, details ] }`.
+- `order-history/details/<order_id>.json` — raw detail responses. They are the
+  resume cache: an interrupted run costs nothing to restart, and a later run
+  only fetches orders it has not seen.
+- **Group orders** keep no top-level `items`; each participant's basket sits in
+  `details.group.my_member` / `details.group.other_members[]`, along with
+  `total_share` per person. ~1 in 6 orders is one of these — code that reads
+  `details.items` alone silently sees an empty basket.
+- Rate limits: these endpoints throttle **far** below the ~6.6 req/s the venue
+  endpoints allow, so this uses the adaptive gate in `lib/ratelimit.mjs` (widen
+  ×1.5 on the first 429 of a request, ×0.8 back down per 5 clean responses, cap
+  3 s) instead of the scanner's fixed rate. A ~1100-order history settles around
+  1.5–3 s per request and takes roughly 35 minutes cold; a re-run over a warm
+  cache is seconds.
+- `--stream` emits NDJSON (`start`/`listing`/`listed`/`progress`/`done`), which
+  is what the web report drives its progress bar from.
+
+In the report, **🧾 Order history** (or `/history` directly) opens the browser:
+per-order table with search, sorting, expandable baskets (group orders split by
+person), spend-by-month chart and headline stats. **⇩ Export** (POST
+`/history/export`) runs the exporter and streams progress over SSE
+(`/history/events`) into the status bar — phase, done/total, the pace the gate
+settled on and how many 429s it absorbed. **↻ Re-fetch all** does the same with
+`--refetch`. `GET /history/data` returns the saved export **verbatim** — nothing
+is filtered server-side — and the page derives its table from it, keeping each
+order's untouched JSON behind a "raw order JSON" toggle in the expanded row.
+
 ## Options
 
 | Flag | Default | What |

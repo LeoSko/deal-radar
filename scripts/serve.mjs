@@ -157,9 +157,57 @@ function startScan(coords) {
   }
 }
 
+// --- order history export --------------------------------------------------
+// wolt-history.mjs speaks the same NDJSON-over-stdout convention as the
+// scanners, so the export gets its own SSE channel and its own progress bar.
+// One export at a time; its last state is replayed to whoever opens the page.
+const HISTORY_DIR = configPath("order-history");
+const historyClients = new Set();
+let historyChild = null;
+let historyState = { phase: "idle" };
+
+function historyBroadcast(evt) {
+  historyState = { ...historyState, ...evt };
+  const line = `data: ${JSON.stringify(historyState)}\n\n`;
+  for (const res of historyClients) res.write(line);
+}
+
+function startHistoryExport({ refetch } = {}) {
+  if (historyChild) return false;
+  const args = [join(HERE, "wolt-history.mjs"), "--stream", "--out", HISTORY_DIR];
+  if (refetch) args.push("--refetch");
+  historyState = { phase: "listing", done: 0, total: 0, failed: 0, started_at: Date.now() };
+  historyBroadcast({});
+  historyChild = spawn(process.execPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+  let buf = "";
+  historyChild.stdout.on("data", (chunk) => {
+    buf += chunk;
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      try {
+        const evt = JSON.parse(line);
+        if (evt.type === "listed") historyBroadcast({ phase: "details", total: evt.total });
+        else if (evt.type === "done") historyBroadcast({ phase: "done", ...evt });
+        else historyBroadcast(evt);
+      } catch { /* ignore non-JSON */ }
+    }
+  });
+  historyChild.stderr.on("data", (chunk) => process.stderr.write("[history] " + chunk));
+  historyChild.on("exit", (code) => {
+    historyChild = null;
+    if (historyState.phase !== "done") historyBroadcast({ phase: "failed", code });
+  });
+  return true;
+}
+
 function shutdown() {
   for (const c of children) { try { c.kill(); } catch {} }
+  try { historyChild?.kill(); } catch {}
   for (const r of clients) { try { r.end(); } catch {} }
+  for (const r of historyClients) { try { r.end(); } catch {} }
   server.close();
   process.exit(0);
 }
@@ -190,6 +238,45 @@ const server = http.createServer((req, res) => {
     startScan(coords);
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("rescanning");
+    return;
+  }
+  if (req.url.startsWith("/history/export") && req.method === "POST") {
+    const refetch = new URL(req.url, "http://x").searchParams.get("refetch") === "1";
+    const started = startHistoryExport({ refetch });
+    console.log(started ? "order-history export started via UI" : "export already running");
+    res.writeHead(started ? 200 : 409, { "Content-Type": "text/plain" });
+    res.end(started ? "exporting" : "already running");
+    return;
+  }
+  if (req.url === "/history/events") {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    res.write(`retry: 2000\n\n`);
+    res.write(`data: ${JSON.stringify(historyState)}\n\n`);  // late joiner gets current state
+    historyClients.add(res);
+    req.on("close", () => historyClients.delete(res));
+    return;
+  }
+  if (req.url === "/history/data") {
+    // The saved export, byte for byte — every field Wolt returned for every
+    // order. The page derives its table from this; nothing is filtered here.
+    try {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(readFileSync(join(HISTORY_DIR, "wolt_history.json")));
+    } catch (e) {
+      // No export yet (or a half-written file) — the page offers the button.
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+  if (req.url === "/history") {
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    try { res.end(readFileSync(join(PUBLIC_DIR, "history.html"))); }
+    catch (e) { res.end(`<h1>public/history.html missing</h1><pre>${e.message}</pre>`); }
     return;
   }
   if (req.url === "/places") {

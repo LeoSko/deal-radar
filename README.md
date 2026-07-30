@@ -115,6 +115,33 @@ rank and discount, and tiles the shots into one grid (via ImageMagick's
 id — `--token`/`--chat-id`, the `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`
 environment variables, or `telegram.json` next to the auth files.
 
+## Your own order history
+
+The same Wolt session that finds deals can also hand back everything you have
+ever ordered — which the app itself will only show you fifty at a time, one
+order per screen, with no export.
+
+```bash
+node scripts/wolt-history.mjs        # → ~/.config/deal-radar/order-history/
+```
+
+You get one `wolt_history.json` holding every order with its full detail — the
+basket with per-item prices and options, discounts, fees, tips, the venue, the
+delivery distance and time — plus a per-order cache that makes the next run
+incremental. Group orders keep each participant's items and share, so a dinner
+for six is still six baskets rather than one anonymous total.
+
+The report has a page for it (**🧾 Order history**, or `/history`): search and
+sort your orders, expand one to see the basket split by person, the fee
+breakdown, what card paid for it, and the order's untouched JSON. The **⇩
+Export** button runs the exporter from the browser and streams its progress into
+the status bar. Nothing is trimmed on the way to the page — it is handed the
+export exactly as saved.
+
+These endpoints are throttled much harder than the ones the scanner uses, so the
+export paces itself adaptively rather than at a fixed rate — a thousand orders
+takes about half an hour the first time and seconds thereafter.
+
 ## How it finds things
 
 Wolt's own "promotions near you" endpoint is fast but thin, so the scanner

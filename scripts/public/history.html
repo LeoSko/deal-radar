@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deal Radar — order history</title>
+<link rel="icon" type="image/svg+xml" href="/logos/deal-radar.svg">
+<link rel="stylesheet" href="/public/app.css">
+<style>
+/* Page-local layout: the deals report is a card grid, this is a table + stats. */
+main.hist { padding: 20px; max-width: 1180px; margin: 0 auto; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-3); margin-bottom: var(--space-5); }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-3) var(--space-4); }
+.stat .k { color: var(--text-muted); font-size: 12px; }
+.stat .v { font-size: 20px; font-weight: 650; margin-top: 2px; overflow-wrap: anywhere; }
+.stat .v small { display: block; font-size: 12px; font-weight: 400; color: var(--text-muted); margin-top: 2px; }
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-4); margin-bottom: var(--space-5); }
+.panel h2 { margin: 0 0 var(--space-3); font-size: 14px; font-weight: 650; }
+/* Year ticks sit under the first bar of each year and would be cut off at the
+   chart's edges, so the row reserves room for half a label on each side. */
+.months { display: flex; align-items: flex-end; gap: 3px; height: 120px; overflow-x: auto; overflow-y: hidden;
+          padding: 0 14px 18px; }
+.months .m { flex: 1 1 10px; min-width: 6px; background: linear-gradient(180deg, var(--accent), var(--accent-2)); border-radius: 3px 3px 0 0; position: relative; }
+.months .m:hover { filter: brightness(1.25); }
+.months .m span { position: absolute; bottom: -16px; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+/* Sticky column headers park directly under the page header. --hdr-h is kept in
+   sync with the real header height (it changes as the toolbar wraps), and the
+   table must NOT sit in an overflow container or sticky would resolve against
+   that scrollport instead of the viewport and scroll away with the page. */
+th { color: var(--text-muted); font-weight: 600; font-size: 12px; position: sticky; top: var(--hdr-h, 147px);
+     z-index: 1; background: var(--surface); cursor: pointer; white-space: nowrap; box-shadow: 0 1px 0 var(--border); }
+tr.order { scroll-margin-top: calc(var(--hdr-h, 147px) + 40px); }
+th[aria-sort="descending"]::after { content: " ↓"; } th[aria-sort="ascending"]::after { content: " ↑"; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td:nth-child(2) { overflow-wrap: anywhere; }  /* venue names can be one long token */
+tr.order:hover { background: var(--surface-2); }
+tr.order { cursor: pointer; }
+.items { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+tr.detail td { background: var(--surface-2); color: var(--text-muted); font-size: 12px; }
+tr.detail ul { margin: 0; padding-left: 18px; } tr.detail li { margin: 2px 0; }
+.rawjson { margin-top: var(--space-2); }
+.rawjson summary { cursor: pointer; color: var(--accent-2); }
+/* Long JSON lines would set the cell's min-content width and push the whole
+   table past the viewport, so they wrap instead of scrolling sideways. */
+.rawjson pre { max-height: 320px; overflow-y: auto; background: var(--bg); border: 1px solid var(--border);
+                border-radius: var(--radius-md); padding: var(--space-2); margin: var(--space-2) 0 0; font-size: 11px;
+                white-space: pre-wrap; overflow-wrap: anywhere; }
+.badge { display: inline-block; padding: 1px 6px; border-radius: var(--radius-pill); font-size: 11px; border: 1px solid var(--border-strong); white-space: nowrap; }
+.badge.rejected, .badge.deferred_payment_failed { color: var(--danger); border-color: #5a2327; }
+.badge.grp { color: var(--accent); border-color: #2c5348; }
+.empty-state { text-align: center; color: var(--text-muted); padding: 60px 20px; }
+/* Listing has no known total — a frozen sliver reads as "stuck", so sweep it. */
+.bar.indeterminate > i { width: 30% !important; animation: sweep 1.4s ease-in-out infinite; }
+@keyframes sweep { 0% { margin-left: -30% } 100% { margin-left: 100% } }
+@media (prefers-reduced-motion: reduce) { .bar.indeterminate > i { animation: none; width: 100% !important; opacity: .5; } }
+.morerow { text-align: center; padding: var(--space-3) 0 0; }
+/* Narrow screens drop the two derived columns rather than growing a horizontal
+   scrollbar — the counts stay reachable by expanding a row. */
+@media (max-width: 720px) {
+  main.hist { padding: 12px; }
+  th.opt, td.opt { display: none; }
+}
+/* Wide enough that a date never needs two lines; below this it may wrap rather
+   than force the table past the viewport. */
+@media (min-width: 721px) {
+  td:first-child, th:first-child { white-space: nowrap; }
+}
+</style>
+</head>
+<body>
+<a class="skip sr-only" href="#main">Skip to content</a>
+<header>
+  <div class="top">
+    <h1><img class="applogo" src="/logos/deal-radar.svg" alt="">Order history <span class="sub" id="sub">loading…</span></h1>
+    <div class="btns">
+      <a class="btn" href="/" title="Back to the deal scan">← Deals</a>
+      <button class="btn" id="export" title="Fetch new orders (cached ones are reused)">⇩ Export</button>
+      <button class="btn" id="refetch" title="Re-download every order, ignoring the cache">↻ Re-fetch all</button>
+    </div>
+  </div>
+  <div class="bar"><i id="barfill"></i></div>
+  <div class="meta">
+    <span><span class="dot done" id="dot"></span><span id="status" role="status" aria-live="polite">idle</span></span>
+    <span id="pace"></span>
+    <span id="count" role="status" aria-live="polite"></span>
+  </div>
+  <div class="controls toolbar">
+    <div class="searchwrap">
+      <input class="search" id="search" type="search" aria-label="Search venues and dishes" placeholder="🔍 Search venues, dishes…" autocomplete="off">
+      <button class="search-x" id="search-x" type="button" aria-label="Clear search" title="Clear search" style="display:none">✕</button>
+    </div>
+  </div>
+</header>
+
+<main class="hist" id="main">
+  <h1 class="sr-only">Wolt order history</h1>
+  <div class="stats" id="stats"></div>
+  <div class="panel" id="monthpanel" style="display:none">
+    <h2>Spend by month <span class="muted" id="monthcur"></span></h2>
+    <div class="months" id="months"></div>
+  </div>
+  <div class="panel">
+    <table>
+      <caption class="sr-only">Wolt orders, newest first. Activate a row to see its full basket.</caption>
+      <thead><tr>
+        <th data-sort="ts" aria-sort="descending">Date</th>
+        <th data-sort="venue">Venue</th>
+        <th class="num opt" data-sort="items">Items</th>
+        <th class="num opt" data-sort="discount">Discount</th>
+        <th class="num" data-sort="total">Total</th>
+        <th data-sort="status">Status</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty-state" id="empty">No export yet — press <b>⇩ Export</b> to pull your order history.</div>
+    <div class="morerow" id="morerow" style="display:none">
+      <button class="btn sm" id="more">Show more</button> <span class="muted" id="shown"></span>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let ROWS = [], META = null, sortKey = "ts", sortDir = -1, query = "";
+
+// ── status bar ─────────────────────────────────────────────────────────────
+// One SSE channel carries the exporter's own progress events; the page renders
+// them into the same bar/dot/status trio the scan report uses.
+const PHASES = {
+  idle: "idle", listing: "listing orders…", details: "fetching order details…",
+  done: "export complete", failed: "export failed",
+};
+function renderProgress(s) {
+  const running = s.phase === "listing" || s.phase === "details";
+  $("dot").className = "dot" + (running ? "" : " done");
+  $("export").disabled = running; $("refetch").disabled = running;
+  const known = s.phase === "details" || s.phase === "done";
+  const pct = known && s.total ? Math.round((s.done || 0) / s.total * 100) : 0;
+  document.querySelector(".bar").classList.toggle("indeterminate", running && !known);
+  $("barfill").style.width = (s.phase === "done" ? 100 : pct) + "%";
+  let text = PHASES[s.phase] || s.phase;
+  if (s.phase === "listing" && s.orders) text += ` ${s.orders} found`;
+  if (s.phase === "details") text += ` ${s.done}/${s.total} (${pct}%)`;
+  if (s.phase === "done") text += ` — ${s.total} orders${s.failed ? `, ${s.failed} failed` : ""}`;
+  if (s.phase === "failed") text += s.code != null ? ` (exit ${s.code})` : "";
+  $("status").textContent = text;
+  // Pacing is the interesting part of a throttled export: show the gap the
+  // adaptive gate settled on and how many 429s it has absorbed.
+  $("pace").textContent = running && s.gap_ms
+    ? `pace ${(1000 / s.gap_ms).toFixed(1)}/s · ${s.rate_limited || 0} × 429${s.cached ? ` · ${s.cached} cached` : ""}`
+    : "";
+  if (running && s.venue) $("sub").textContent = s.venue;
+  if (s.phase === "done") load();
+}
+new EventSource("/history/events").onmessage = (e) => renderProgress(JSON.parse(e.data));
+
+async function startExport(refetch) {
+  $("export").disabled = $("refetch").disabled = true;
+  await fetch("/history/export" + (refetch ? "?refetch=1" : ""), { method: "POST" });
+}
+$("export").onclick = () => startExport(false);
+$("refetch").onclick = () => {
+  if (confirm("Re-download every order from Wolt? The cache is ignored, so this takes as long as the first export.")) startExport(true);
+};
+
+// ── data ───────────────────────────────────────────────────────────────────
+const money = (minor, cur) => minor == null ? "—"
+  : new Intl.NumberFormat(undefined, { style: "currency", currency: cur || "EUR" }).format(minor / 100);
+const day = (ts) => ts ? new Date(ts).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—";
+
+// A group order carries no top-level `items`: each participant's basket hangs
+// off group.my_member / group.other_members. Flatten both, tagged with who
+// ordered what.
+function orderItems(d) {
+  const flat = (items, who) =>
+    (items || []).map((it) => ({ name: it.name, count: it.count, price: it.end_amount ?? it.price, who }));
+  if (!d.group) return flat(d.items);
+  const g = d.group;
+  const who = (m) => [m.first_name, m.last_name].filter(Boolean).join(" ");
+  return [...flat(g.my_member?.items, "me"), ...(g.other_members || []).flatMap((m) => flat(m.items, who(m)))];
+}
+
+// The server hands over the export untouched; the fields below are just the
+// ones this table sorts and totals on. `raw` keeps the whole order reachable.
+function toRow(o) {
+  const d = o.details || {};
+  const g = d.group;
+  return {
+    id: o.purchase_id,
+    ts: o.payment_time_ts || null,
+    venue: o.venue_name || d.venue_name || "",
+    status: o.status,
+    currency: d.currency || null,
+    total: d.total_price ?? o.total_amount ?? null,
+    items_price: d.items_price ?? null,
+    delivery: d.delivery_price ?? null,
+    service_fee: d.service_fee ?? null,
+    tips: d.tips?.total_tip_amount ?? 0,
+    credits: d.credits || 0,
+    discount: (d.discounts || []).reduce((sum, x) => sum + Math.abs(x.amount || 0), 0),
+    payments: d.payments || [],
+    items: orderItems(d),
+    // On a group order the headline total is the whole table's bill; what left
+    // this account is the host's total or this member's share.
+    group: g && {
+      name: g.name || null,
+      members: 1 + (g.other_members?.length || 0),
+      is_host: !!g.my_member?.is_host,
+      my_share: g.my_member?.total_share ?? null,
+    },
+    raw: o,
+  };
+}
+
+async function load() {
+  const res = await fetch("/history/data");
+  if (!res.ok) { $("sub").textContent = "no export yet"; return; }
+  const data = await res.json();
+  META = data.meta;
+  ROWS = data.orders.map(toRow).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  $("sub").textContent = `${META.order_count} orders · exported ${new Date(META.fetched_at).toLocaleString()}`;
+  $("count").textContent = META.details_failed ? `${META.details_failed} orders missing detail` : "";
+  renderStats(); renderMonths(); renderRows();
+}
+
+// Histories that span countries mix currencies; totals stay per-currency
+// rather than pretending to a single number.
+function byCurrency(rows) {
+  const acc = new Map();
+  for (const r of rows) if (r.total != null) acc.set(r.currency, (acc.get(r.currency) || 0) + r.total);
+  return [...acc.entries()].sort((a, b) => b[1] - a[1]);
+}
+
+function renderStats() {
+  const delivered = ROWS.filter((r) => r.status === "delivered");
+  const spend = byCurrency(delivered);
+  const venues = new Map();
+  for (const r of delivered) venues.set(r.venue, (venues.get(r.venue) || 0) + 1);
+  const top = [...venues.entries()].sort((a, b) => b[1] - a[1])[0];
+  const ts = ROWS.map((r) => r.ts).filter(Boolean);
+  const main = spend[0];
+  const stat = (k, v, sub) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}${sub ? ` <small>${sub}</small>` : ""}</div></div>`;
+  // A history that crosses borders carries several currencies. The dominant one
+  // is the headline; the rest go underneath rather than into one long line that
+  // wraps and drags every card's height up with it.
+  const spendMain = main ? money(main[1], main[0]) : "—";
+  const spendRest = spend.slice(1).map(([c, v]) => money(v, c)).join(" · ");
+  $("stats").innerHTML = [
+    stat("Orders", ROWS.length, `${delivered.length} delivered`),
+    stat("Spent", spendMain, spendRest && `+ ${spendRest}`),
+    stat("Average order", main ? money(main[1] / delivered.filter((r) => r.currency === main[0]).length, main[0]) : "—"),
+    stat("Venues", venues.size, top ? `top: ${top[0]} ×${top[1]}` : ""),
+    // Joined orders bill the host, so they never appear here — only mention
+    // hosting when the history actually contains both kinds.
+    (() => {
+      const groups = delivered.filter((r) => r.group);
+      const joined = groups.filter((r) => !r.group.is_host).length;
+      const biggest = groups.reduce((m, r) => Math.max(m, r.group.members), 0);
+      return stat("Group orders", groups.length,
+        joined ? `${groups.length - joined} hosted by you` : biggest ? `biggest: ${biggest} people` : "");
+    })(),
+    stat("First order", day(Math.min(...ts))),
+    stat("Last order", day(Math.max(...ts))),
+  ].join("");
+}
+
+function renderMonths() {
+  const delivered = ROWS.filter((r) => r.status === "delivered" && r.ts);
+  const cur = byCurrency(delivered)[0]?.[0];
+  const rows = delivered.filter((r) => r.currency === cur);
+  if (!rows.length) return;
+  const buckets = new Map();
+  for (const r of rows) {
+    const d = new Date(r.ts);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    buckets.set(key, (buckets.get(key) || 0) + r.total);
+  }
+  const keys = [...buckets.keys()].sort();
+  const max = Math.max(...buckets.values());
+  $("monthcur").textContent = `(${cur})`;
+  $("months").innerHTML = keys.map((k, i) => {
+    const v = buckets.get(k);
+    const label = k.endsWith("-01") || i === 0 ? `<span>${k.slice(0, 4)}</span>` : "";
+    return `<div class="m" style="height:${Math.max(2, v / max * 100)}%" title="${k}: ${money(v, cur)}">${label}</div>`;
+  }).join("");
+  $("monthpanel").style.display = "";
+}
+
+function matches(r) {
+  if (!query) return true;
+  const hay = (r.venue + " " + r.items.map((i) => i.name).join(" ")).toLowerCase();
+  return hay.includes(query);
+}
+
+// A full history is over a thousand orders; rendering them all makes a 60000px
+// page whose scrollbar is useless. Show a page at a time instead.
+const PAGE = 200;
+let shown = PAGE;
+
+function renderRows() {
+  const list = ROWS.filter(matches).sort((a, b) => {
+    const get = (r) => sortKey === "items" ? r.items.length : r[sortKey];
+    const [x, y] = [get(a), get(b)];
+    return (typeof x === "string" ? x.localeCompare(y || "") : (x || 0) - (y || 0)) * sortDir;
+  });
+  $("empty").style.display = list.length ? "none" : "";
+  if (!ROWS.length) $("empty").innerHTML = "No export yet — press <b>⇩ Export</b> to pull your order history.";
+  else if (!list.length) $("empty").textContent = "No orders match that search.";
+  const page = list.slice(0, shown);
+  $("rows").innerHTML = page.map((r) => `
+    <tr class="order" data-id="${r.id}" tabindex="0">
+      <td>${day(r.ts)}</td>
+      <td>${esc(r.venue)}${r.group ? ` <span class="badge grp" title="${esc(r.group.name || "group order")} · ${r.group.members} people">👥 ${r.group.members}</span>` : ""}
+        <div class="items">${esc(r.items.slice(0, 3).map((i) => `${i.count}× ${i.name}`).join(", "))}${r.items.length > 3 ? ` +${r.items.length - 3}` : ""}</div></td>
+      <td class="num opt">${r.items.length}</td>
+      <td class="num opt">${r.discount ? money(r.discount, r.currency) : "—"}</td>
+      <td class="num">${money(r.total, r.currency)}</td>
+      <td><span class="badge ${r.status}" title="${r.status}">${statusLabel(r.status)}</span></td>
+    </tr>`).join("");
+  $("morerow").style.display = list.length > page.length ? "" : "none";
+  $("shown").textContent = `showing ${page.length} of ${list.length}`;
+}
+$("more").onclick = () => { shown += PAGE; renderRows(); };
+
+const esc = (s) => String(s ?? "").replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
+// Wolt's raw status names are long enough to wrap the column; the full value
+// stays on the badge's title.
+const statusLabel = (s) => ({ deferred_payment_failed: "payment failed" }[s] || s.replace(/_/g, " "));
+
+// Row expansion shows the full basket + the fee breakdown of that order.
+$("rows").addEventListener("click", (e) => toggle(e.target.closest("tr.order")));
+$("rows").addEventListener("keydown", (e) => { if (e.key === "Enter") toggle(e.target.closest("tr.order")); });
+function toggle(tr) {
+  if (!tr) return;
+  const open = tr.nextElementSibling?.classList.contains("detail");
+  if (open) { tr.nextElementSibling.remove(); return; }
+  const r = ROWS.find((x) => x.id === tr.dataset.id);
+  const fee = (label, v) => v ? `<li>${label}: ${money(v, r.currency)}</li>` : "";
+  const line = (i) => `<li>${i.count}× ${esc(i.name)} — ${money(i.price, r.currency)}</li>`;
+  // A group order's basket is worth splitting by person; a solo one is just a list.
+  let basket;
+  if (r.group) {
+    const people = [...new Set(r.items.map((i) => i.who))];
+    basket = people.map((who) =>
+      `<li><b>${who === "me" ? "You" : esc(who)}</b><ul>${r.items.filter((i) => i.who === who).map(line).join("")}</ul></li>`).join("");
+  } else {
+    basket = r.items.map(line).join("");
+  }
+  const det = document.createElement("tr");
+  det.className = "detail";
+  det.innerHTML = `<td colspan="6"><ul>
+    ${r.group ? `<li>${esc(r.group.name || "Group order")} — ${r.group.members} people, ${r.group.is_host ? "you hosted" : "you joined"}${r.group.my_share != null ? `, your share ${money(r.group.my_share, r.currency)}` : ""}</li>` : ""}
+    ${basket}
+    ${fee("Items", r.items_price)}${fee("Delivery", r.delivery)}${fee("Service fee", r.service_fee)}${fee("Tips", r.tips)}${fee("Discount", -r.discount)}${fee("Credits", r.credits)}
+    ${r.payments.length ? `<li>Paid with ${r.payments.map((p) => `${esc(p.name)}${p.method?.type ? ` (${esc(p.method.type)})` : ""} ${money(p.amount, r.currency)}${p.payment_time ? ` on ${esc(p.payment_time)}` : ""}`).join(" + ")}</li>` : ""}
+  </ul>
+  <details class="rawjson"><summary>raw order JSON</summary><pre>${esc(JSON.stringify(r.raw, null, 2))}</pre></details></td>`;
+  tr.after(det);
+}
+
+document.querySelectorAll("th[data-sort]").forEach((th) => th.onclick = () => {
+  const k = th.dataset.sort;
+  sortDir = sortKey === k ? -sortDir : (k === "venue" || k === "status" ? 1 : -1);
+  sortKey = k;
+  document.querySelectorAll("th[data-sort]").forEach((o) => o.removeAttribute("aria-sort"));
+  th.setAttribute("aria-sort", sortDir < 0 ? "descending" : "ascending");
+  renderRows();
+});
+
+$("search").oninput = (e) => {
+  query = e.target.value.trim().toLowerCase();
+  $("search-x").style.display = query ? "" : "none";
+  shown = PAGE;
+  renderRows();
+};
+$("search-x").onclick = () => { $("search").value = ""; query = ""; $("search-x").style.display = "none"; shown = PAGE; renderRows(); };
+
+// The header grows and shrinks as its toolbar wraps; the sticky column headers
+// park under whatever it currently measures.
+const header = document.querySelector("header");
+const syncHeaderHeight = () =>
+  document.documentElement.style.setProperty("--hdr-h", Math.round(header.getBoundingClientRect().height) + "px");
+new ResizeObserver(syncHeaderHeight).observe(header);
+syncHeaderHeight();
+
+load();
+</script>
+</body></html>
