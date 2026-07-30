@@ -164,6 +164,25 @@ Provider toggles: `--no-wolt` / `--no-bolt` / `--no-foody`.
   (`--scan-limit`, `--min-discount`, `--scan-rps`, `--lat/--lon`, …).
 - Powered by `deals.mjs --stream` (NDJSON events: `start`/`deal`/`progress`/`done`).
 
+## Screenshots (`screenshots.mjs`, optional)
+
+Shoots the top deals as annotated venue-page PNGs — one per venue, every deal on
+it outlined with a rank/discount badge — and tiles them into one grid image.
+
+```bash
+node ~/.claude/skills/deal-radar/scripts/screenshots.mjs --address Home --top 10
+```
+
+Needs `npm i puppeteer` (the only optional dependency) and ImageMagick's
+`montage` for the tile. It re-runs `deals.mjs --json` for the list, then loads
+each venue page in headless Chrome with the Wolt cookies injected and the
+account's address list intercepted so prices render for `--address`.
+
+Sending the grid + list to Telegram is opt-out (`--no-send`) and needs
+credentials, else it's skipped: `--token`/`--chat-id`, `TELEGRAM_BOT_TOKEN` /
+`TELEGRAM_CHAT_ID`, or `{"token": …, "chat_id": …}` in
+`~/.config/deal-radar/telegram.json`.
+
 ## Options
 
 | Flag | Default | What |

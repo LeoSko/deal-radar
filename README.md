@@ -102,6 +102,19 @@ node scripts/foody.mjs --json
 `node scripts/deals.mjs --help`-worthy flags are documented in `SKILL.md`, along
 with the scanner internals.
 
+And a picture mode, if you'd rather send someone the deals than describe them:
+
+```bash
+npm i puppeteer                                        # the only optional dep
+node scripts/screenshots.mjs --address Home --top 10
+```
+
+That opens each venue's page logged in, outlines every proposed item with its
+rank and discount, and tiles the shots into one grid (via ImageMagick's
+`montage`). It can post the grid to Telegram if you give it a bot token and chat
+id — `--token`/`--chat-id`, the `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`
+environment variables, or `telegram.json` next to the auth files.
+
 ## How it finds things
 
 Wolt's own "promotions near you" endpoint is fast but thin, so the scanner
