@@ -252,18 +252,23 @@ function parsePromoPct(txt) {
 //   - delivery_fee       → "0 € delivery fee", "Free delivery", "X & €0 Del. Fees"
 //   - schedule_label     → "EVERY DAY | 07:00 - 24:00"
 //   - marketing_label    → "New", "ONLY ON WOLT", "Friends offer"
+//   - payment_promo      → "Enjoy €5 Cashback with Visa" (card campaign, every venue)
 //   - free_item          → "FREE drink", "FREE side dish"
 //   - fixed_price        → "Lunch offer €8.90", "My Box only €12.99", "2 FOR €9"
 //   - fixed_amount_off   → "2 € off", "-€1.50 Poe's Chicken Strips" (no min spend → can't compute %)
 //   - named_offer        → "Coffee Combo", "Party Offer", "Large & X-Large pizzas offer"
 //   - unknown            → none of the above; worth manual review
-function classifyUnparsedBadge(text) {
+export function classifyUnparsedBadge(text) {
   if (!text) return "no_text";
   const t = String(text).trim();
   if (!t.length) return "no_text";
   if (/delivery\s+fees?|free\s+delivery|del\.?\s*fees?/i.test(t)) return "delivery_fee";
   if (/^\s*every\s+day\b|\b\d{2}:\d{2}\s*[-–]\s*\d{2}:\d{2}\b/i.test(t)) return "schedule_label";
   if (/^new\s*$|\bonly\s+on\s+wolt\b|^friends\s+offer\s*$/i.test(t)) return "marketing_label";
+  // Card-issuer campaigns run Wolt-wide, so they carry a € amount but say nothing
+  // about this venue's prices. Left unclassified they read as `fixed_price`, which
+  // marks EVERY venue as carrying an offer badge worth deep-scanning.
+  if (/\bwith\s+(visa|mastercard|maestro|amex|american\s+express)\b/i.test(t)) return "payment_promo";
   if (/\bfree\b/i.test(t)) return "free_item";
   // Anything with a €amount but no %: likely a fixed-price or fixed-€-off badge.
   if (/€\s*\d|(\d+(?:[.,]\d+)?)\s*€/.test(t) && !/%/.test(t)) {
@@ -274,18 +279,45 @@ function classifyUnparsedBadge(text) {
   return "unknown";
 }
 
-// Append an unparsed badge sample to the JSONL log. Best-effort; failures don't
-// stop the run. Read with `--show-unparsed` to summarize.
+// Badge kinds that say nothing about item prices: never logged for review, never
+// a reason to deep-scan a venue.
+const IGNORABLE_BADGE_KINDS = new Set([
+  "no_text", "delivery_fee", "schedule_label", "marketing_label", "payment_promo", "free_item",
+]);
+
+// Append an unparsed badge sample to the JSONL log and return how many lines were
+// actually written. Best-effort; failures don't stop the run. Read with
+// `--show-unparsed` to summarize.
+//
+// One line per (badge text, venue) — a badge that survives many scans is the same
+// missing rule each time, and re-logging it buries the rare texts under thousands
+// of repeats (one venue's badge had accumulated 70 copies).
 async function recordUnparsedBadges(samples) {
-  if (!samples.length) return;
+  if (!samples.length) return 0;
   try {
     await mkdir(dirname(UNPARSED_LOG_PATH), { recursive: true });
+    const seen = new Set();
+    try {
+      for (const line of (await readFile(UNPARSED_LOG_PATH, "utf8")).split("\n")) {
+        if (!line) continue;
+        try { const r = JSON.parse(line); seen.add(`${r.text}\t${r.venue_slug}`); } catch { /* skip */ }
+      }
+    } catch { /* first run — no log yet */ }
+    const fresh = samples.filter((s) => {
+      const key = `${s.text}\t${s.venue_slug}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (!fresh.length) return 0;
     const ts = new Date().toISOString();
-    const lines = samples.map((s) => JSON.stringify({ ts, ...s }));
+    const lines = fresh.map((s) => JSON.stringify({ ts, ...s }));
     await appendFile(UNPARSED_LOG_PATH, lines.join("\n") + "\n");
+    return fresh.length;
   } catch (e) {
     process.stderr.write(`(unparsed-log write failed: ${e.message})\n`);
   }
+  return 0;
 }
 
 async function showUnparsedSummary() {
@@ -316,10 +348,11 @@ async function showUnparsedSummary() {
     if (sample) console.log(`        venues: ${sample}`);
   }
   console.log(
-    "\nReview categories:\n" +
+    "\nCounts are venues carrying the badge, not scans — each (text, venue) is logged once.\n" +
+    "Review categories:\n" +
     "  fixed_price / fixed_amount_off / named_offer — consider adding parser rules.\n" +
     "  unknown — likely needs a new parse pattern or banlist entry.\n" +
-    "  delivery_fee / schedule_label / marketing_label / free_item — safely ignored.\n",
+    "  delivery_fee / schedule_label / marketing_label / payment_promo / free_item — never logged.\n",
   );
 }
 
@@ -347,7 +380,7 @@ function extractVenueLevelDeals(promo, banlist) {
       if (!pct) {
         const kind = classifyUnparsedBadge(text);
         // Skip well-known no-discount labels silently.
-        if (kind !== "no_text" && kind !== "delivery_fee" && kind !== "schedule_label" && kind !== "marketing_label" && kind !== "free_item") {
+        if (!IGNORABLE_BADGE_KINDS.has(kind)) {
           unparsed.push({
             kind,
             text,
@@ -391,10 +424,7 @@ function hasUnparsedOfferBadge(v) {
   for (const p of v.promotions || []) {
     const t = p?.text || "";
     if (!t || parsePromoPct(t) != null) continue;
-    const k = classifyUnparsedBadge(t);
-    if (k !== "no_text" && k !== "delivery_fee" && k !== "schedule_label" && k !== "marketing_label" && k !== "free_item") {
-      return true;
-    }
+    if (!IGNORABLE_BADGE_KINDS.has(classifyUnparsedBadge(t))) return true;
   }
   return false;
 }
@@ -1260,10 +1290,10 @@ async function main() {
   // --scan, a badge with no % in its text isn't a parser gap — it just needs a
   // scan — so logging it would spam the review log with scan-resolvable venues.
   if (opts.scan) {
-    await recordUnparsedBadges(unparsed);
-    if (unparsed.length) {
+    const logged = await recordUnparsedBadges(unparsed);
+    if (logged) {
       process.stderr.write(
-        `(logged ${unparsed.length} unparsed badge${unparsed.length === 1 ? "" : "s"} — review with --show-unparsed)\n`,
+        `(logged ${logged} new unparsed badge${logged === 1 ? "" : "s"} — review with --show-unparsed)\n`,
       );
     }
   }

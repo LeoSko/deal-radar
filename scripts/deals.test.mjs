@@ -3,7 +3,7 @@
 // can't fully exercise (notably the min_quantity ≥ 2 "buy N" bundle branch,
 // which Wolt only intermittently ships). Run: node deals.test.mjs
 import assert from "node:assert/strict";
-import { computeItemDiscountDeal, campaignRequiredQty, isPlaceholderItemDiscount } from "./deals.mjs";
+import { computeItemDiscountDeal, campaignRequiredQty, isPlaceholderItemDiscount, classifyUnparsedBadge } from "./deals.mjs";
 
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log(`  ok  ${name}`); };
@@ -115,6 +115,21 @@ t("NOT placeholder: real 40% fraction", () => {
 
 t("NOT placeholder: real €5.05 flat off", () => {
   assert.equal(isPlaceholderItemDiscount({ description: { title: "Big King Deal €7.90" }, conditions: {} }, { amount_per_item: 505 }), false);
+});
+
+// ---- classifyUnparsedBadge ---------------------------------------------------
+
+t("payment_promo: card campaign is not a venue offer", () => {
+  assert.equal(classifyUnparsedBadge("Enjoy €5 Cashback with Visa"), "payment_promo");
+  assert.equal(classifyUnparsedBadge("€10 back with Mastercard"), "payment_promo");
+});
+
+t("payment_promo does NOT swallow a venue cashback badge", () => {
+  assert.equal(classifyUnparsedBadge("€5 cashback on orders over €30"), "fixed_price");
+});
+
+t("delivery_fee: the '& €0 Del. Fees' brand-tie-in form", () => {
+  assert.equal(classifyUnparsedBadge("Charalambides & €0 Del. Fees"), "delivery_fee");
 });
 
 console.log(`\n${pass} passed`);

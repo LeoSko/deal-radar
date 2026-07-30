@@ -227,11 +227,21 @@ credentials, else it's skipped: `--token`/`--chat-id`, `TELEGRAM_BOT_TOKEN` /
 
 ## Self-improving badge parser
 
-Whenever a venue badge text doesn't parse to a discount %, the script appends a
-classified record to `data/unparsed_promos.jsonl` (kind: `fixed_price`,
-`fixed_amount_off`, `named_offer`, `free_item`, `unknown`, etc.). Review with
-`--show-unparsed`. New parser rules go in `parsePromoPct` (deals.mjs); new
-non-food signals go in `banlist.json`.
+Whenever a venue badge text doesn't parse to a discount % **and the scan couldn't
+derive one either**, the script appends a classified record to
+`~/.config/deal-radar/unparsed_promos.jsonl` (kind: `fixed_price`,
+`fixed_amount_off`, `named_offer`, `unknown`). Review with `--show-unparsed`. New
+parser rules go in `parsePromoPct` (deals.mjs); new non-food signals go in
+`banlist.json`.
+
+Kinds in `IGNORABLE_BADGE_KINDS` (`delivery_fee`, `schedule_label`,
+`marketing_label`, `payment_promo`, `free_item`, `no_text`) are never logged and
+never mark a venue as worth deep-scanning. `payment_promo` matters most: a
+card-issuer campaign like "Enjoy €5 Cashback with Visa" runs Wolt-wide, so
+reading it as an offer badge would send *every* venue into the deep scan.
+
+Each `(badge text, venue)` is logged once, so counts in `--show-unparsed` are
+venues carrying the badge rather than how many times you've scanned.
 
 ## Food filter
 
