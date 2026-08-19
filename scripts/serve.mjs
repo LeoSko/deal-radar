@@ -19,6 +19,7 @@ import { dirname, join } from "node:path";
 import { woltFetch } from "../lib/fetch.mjs";
 import { loadAuth } from "../lib/auth.mjs";
 import { configPath } from "../lib/config.mjs";
+import { boltVenueMenu } from "../lib/bolt-menu.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -110,6 +111,7 @@ let children = [];
 let gen = 0;            // bumped each (re)start; stale children's handlers no-op
 let doneProviders = new Set();
 let lastCoords = null;  // chosen delivery address (lat/lon) from the UI, reused across rescans
+const boltMenus = new Map();   // bolt venue id -> { venue_id, categories }, one read per venue
 function startScan(coords) {
   if (coords) lastCoords = coords; else coords = lastCoords;
   const myGen = ++gen;
@@ -238,6 +240,28 @@ const server = http.createServer((req, res) => {
     startScan(coords);
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("rescanning");
+    return;
+  }
+  // Prices behind a Bolt whole-menu deal. The scan cannot carry one (the deal IS the
+  // venue), so the card asks for the venue's menu on demand. Bolt returns the campaign
+  // already applied, so this route only relays what Bolt says. One read per venue per
+  // process: a running scan does not change a menu.
+  if (req.url.startsWith("/bolt-menu")) {
+    const id = new URL(req.url, "http://x").searchParams.get("venue_id") || "";
+    const reply = (code, obj) => {
+      res.writeHead(code, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(obj));
+    };
+    if (!id) { reply(400, { error: "venue_id required" }); return; }
+    const hit = boltMenus.get(id);
+    if (hit) { reply(200, hit); return; }
+    boltVenueMenu(id, lastCoords || {})
+      .then((categories) => {
+        const payload = { venue_id: id, categories };
+        boltMenus.set(id, payload);
+        reply(200, payload);
+      })
+      .catch((e) => reply(502, { error: e.message }));
     return;
   }
   if (req.url.startsWith("/history/export") && req.method === "POST") {

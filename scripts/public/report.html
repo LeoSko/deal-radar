@@ -476,8 +476,16 @@ function card(d) {
         ${d.rating10!=null?`<span class="chip2" style="color:${ratingColor(d.rating10)}">★ ${d.rating10.toFixed(1)}</span>`:''}
         ${d.eta?`<span class="chip2" style="color:${etaColor(d.eta)}">${esc(d.eta)}</span>`:''}
       </div>
-      ${href?`<div class="cardactions"><a class="btn sm" style="flex:1;text-align:center" href="${href}" target="_blank" rel="noopener">Open in ${provName(d.provider)} ↗<span class="sr-only"> (opens in new tab)</span></a></div>`:''}
+      ${cardActions(d, href)}
     </div></div>`;
+}
+// A whole-menu deal names no dish and carries no price. The venue's own menu does,
+// so offer it next to the open-in-app link instead of leaving the card price-blind.
+function cardActions(d, href) {
+  const open = href ? `<a class="btn sm" style="flex:1;text-align:center" href="${href}" target="_blank" rel="noopener">Open in ${provName(d.provider)} ↗<span class="sr-only"> (opens in new tab)</span></a>` : '';
+  const menu = (d.venue_level && d.provider === 'bolt' && d.venue_id)
+    ? `<button class="btn sm" style="flex:1" data-menu="${esc(d.venue_id)}" data-menu-name="${esc(d.name)}" title="Prices at this venue, discount applied">🧾 Prices</button>` : '';
+  return (open || menu) ? `<div class="cardactions">${open}${menu}</div>` : '';
 }
 function esc(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -560,6 +568,44 @@ function preview(url) {
   document.addEventListener('keydown', onKey, true);
   document.body.appendChild(ov);
 }
+// Menu behind a Bolt whole-menu deal. /bolt-menu relays Bolt's own prices: the
+// campaign is already applied there, so "was" and % come from the provider and
+// nothing on this page multiplies a price by a discount.
+function menuRow(it) {
+  const now = it.price_minor != null ? `<span class="price" style="font-size:14px;color:${priceColor(it.price_minor)}">${money(it.price_minor,it.currency)}</span>` : '<span class="mi-req">no price</span>';
+  const was = it.original_minor != null ? `<span class="was">${money(it.original_minor,it.currency)}</span>` : '';
+  const pct = it.discount_percentage ? `<span class="mi-req">−${it.discount_percentage}%</span>` : '';
+  // A required option group (size, base) is not an extra: the dish cannot be
+  // ordered without it, so its cheapest pick belongs in the real minimum.
+  const req = it.mandatory_addon_minor ? `<span class="mi-req">min ${money(it.effective_min_minor,it.currency)} with ${money(it.mandatory_addon_minor,it.currency)} required</span>` : '';
+  return `<div class="menuitem"><span class="mi-name">${esc(it.name||'')}</span>${pct}${was}${now}${req?`<span class="mi-full">${req}</span>`:''}</div>`;
+}
+function venueMenu(venueId, venueName) {
+  const ov = document.createElement('div');
+  ov.className = 'menuview';
+  ov.innerHTML = `<div class="menupanel"><header><h2>${esc(venueName||'Menu')}</h2>
+      <button class="btn sm menuclose" aria-label="close">✕</button></header>
+    <div class="menulist"><div class="muted">Reading the menu…</div></div></div>`;
+  const shut = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); shut(); } };
+  ov.addEventListener('click', (e) => { if (e.target === ov || e.target.closest('.menuclose')) shut(); });
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(ov);
+  const list = ov.querySelector('.menulist');
+  fetch('/bolt-menu?venue_id=' + encodeURIComponent(venueId)).then(r => r.json()).then((j) => {
+    if (j.error) { list.innerHTML = `<div class="muted">Menu unavailable: ${esc(j.error)}</div>`; return; }
+    const cats = j.categories || [];
+    list.innerHTML = cats.length
+      ? cats.map(c => `<div class="menucat">${esc(c.name)}</div>` + c.items.map(menuRow).join('')).join('')
+      : '<div class="muted">Bolt returned no items for this venue.</div>';
+  }).catch(e => { list.innerHTML = `<div class="muted">Menu unavailable: ${esc(e.message)}</div>`; });
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('[data-menu]');
+  if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  venueMenu(b.dataset.menu, b.dataset.menuName);
+}, true);
 document.addEventListener('click', (e) => {
   const p = e.target.closest && e.target.closest('[data-preview]');
   if (!p) return;
