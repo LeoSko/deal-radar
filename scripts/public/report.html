@@ -215,7 +215,10 @@ function normalizeDeal(d) { if (d && d.is_wolt_plus && !d.is_plus) { d.is_plus =
 function passesRanges(d) {
   for (const k of RKEYS) { const r = rng[k]; if (!r.touched) continue;
     const v = rcfg[k].val(d);
-    if (v == null) { if (rcfg[k].dropNull) return false; continue; }  // unknown: drop if this dim needs a value (price), else keep
+    // unknown: drop if this dim needs a value (price), else keep. A venue-level deal
+    // (every Bolt one: a whole-menu discount) has no single price BY DESIGN and holds
+    // items at every price - dropping it on a price band silently hid all of Bolt.
+    if (v == null) { if (rcfg[k].dropNull && !d.venue_level) return false; continue; }
     if (v < r.lo - 1e-9 || v > r.hi + 1e-9) return false; }
   return true;
 }
