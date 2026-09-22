@@ -85,7 +85,7 @@ Tags:
 - `[W+]` — Wolt+ deal (exact discount shown in the `% off` column)
 - `[  ]` — non-Wolt+ deal
 
-## Providers (Wolt + Bolt)
+## Providers (Wolt + Bolt + Foody)
 
 The viewer scans **multiple delivery apps in parallel** and merges them:
 
@@ -111,9 +111,9 @@ The viewer scans **multiple delivery apps in parallel** and merges them:
   `bin/capture.mjs foody` when calls fail; the import rejects a paste with no
   `x-core-session-id`, which is a guest session and hides every Foody+ deal).
   Coordinates come from `--lat/--lon` (the report always passes them).
-  `--scan-limit` caps venues scanned (default 60). Venue URL: `/delivery/<city>/<slug>`.
+  `--scan-limit` caps venues scanned (default 150). Venue URL: `/delivery/<city>/<slug>`.
 
-Both emit the same unified deal shape (`provider`, `rating10` normalized to /10,
+All three emit the same unified deal shape (`provider`, `rating10` normalized to /10,
 `venue_key` for joining) and the same `--stream` NDJSON events. Add a new app
 later by writing a sibling `<name>.mjs --stream` and adding it to `PROVIDERS` in
 `serve.mjs`.
@@ -125,7 +125,7 @@ node ~/.claude/skills/deal-radar/scripts/foody.mjs --json     # Foody deals alon
 
 ## Live web report (`serve.mjs`)
 
-Spin up a local web viewer that scans **Wolt + Bolt in parallel** and renders the
+Spin up a local web viewer that scans **Wolt + Bolt + Foody in parallel** and renders the
 merged results as cards (discount %, image, price/was, rating, ETA, provider
 badge, deep link), filling in **live** as venues are scanned:
 
