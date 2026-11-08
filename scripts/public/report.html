@@ -96,8 +96,13 @@ function isAlcohol(d) {
 const GROUP_OPTS = [['none','None'],['category','Category'],['venuekey','Venue · cross-app'],['venue','Venue (exact)'],['band','Discount band']];
 // dual-range filters: price (€), delivery (min), rating (/10)
 const RKEYS = ['price','eta','rating'];
+// What the dish really costs at checkout. A required option group (size, base)
+// adds to the base price, and Wolt applies the item discount to it too, so the
+// scanner's effective_min_minor is the honest price; the bare base is not.
+const realMinor = (d) => d.effective_min_minor ?? d.price_minor;
+const realWasMinor = (d) => d.original_minor!=null ? d.original_minor + (d.mandatory_addon_minor||0) : null;
 const rcfg = {
-  price:  { step:0.5, fmt:v=>'€'+v.toFixed(0), val:d=>d.price_minor!=null?d.price_minor/100:null, dropNull:true },
+  price:  { step:0.5, fmt:v=>'€'+v.toFixed(0), val:d=>realMinor(d)!=null?realMinor(d)/100:null, dropNull:true },
   eta:    { step:1,   fmt:v=>v+'m',            val:d=>etaMin(d.eta) },
   rating: { step:0.1, fmt:v=>'★'+v.toFixed(1), val:d=>d.rating10 },
 };
@@ -207,7 +212,7 @@ const sortDeals = (a,b) =>
   ((b.discount_percentage||0)-(a.discount_percentage||0)) ||
   ((b.is_plus?1:0)-(a.is_plus?1:0)) ||
   ((b.rating10||0)-(a.rating10||0)) ||
-  ((a.price_minor??1e9)-(b.price_minor??1e9));
+  ((realMinor(a)??1e9)-(realMinor(b)??1e9));
 // Auto-scan (--json) Wolt deals carry is_wolt_plus but not the unified is_plus, which the
 // W+ chip/partition key off. Normalize on ingest so W+ shows even from a non-stream scan.
 function normalizeDeal(d) { if (d && d.is_wolt_plus && !d.is_plus) { d.is_plus = true; if (!d.plus_label) d.plus_label = PLUS_LABELS[d.provider] || '+'; } return d; }
@@ -442,16 +447,17 @@ function card(d) {
     ? `<div class="thumb" data-preview="${esc(d.image)}" role="button" tabindex="0" title="Click to enlarge" aria-label="Enlarge photo of ${esc(d.name)}" style="background-image:url('${d.image}')">`
     : `<div class="thumb"><span class="noimg">🍽️</span>`;
   const chain = d._chain_count ? ` ·  +${d._chain_count-1} more` : '';
-  const addon = d.mandatory_addon_minor ? ` · +${money(d.mandatory_addon_minor,d.currency)} req` : '';
+  const addon = d.mandatory_addon_minor ? ` · incl. ${(d.mandatory_addon_breakdown||[]).map(b=>b.value).join(', ')||'required options'}` : '';
   // Always show the original (full) price struck through when there's a discount %.
   // Derive it from the shown price when the feed carried no explicit original.
   const pct = d.discount_percentage || 0;
-  const shownMinor = d.price_minor!=null ? d.price_minor : headlineMinor(d.headline);
-  const origMinor = d.original_minor!=null ? d.original_minor
+  const priceMinor = realMinor(d);
+  const shownMinor = priceMinor!=null ? priceMinor : headlineMinor(d.headline);
+  const origMinor = d.original_minor!=null ? realWasMinor(d)
     : (pct>0 && pct<100 && shownMinor!=null ? Math.round(shownMinor/(1-pct/100)) : null);
   const wasHtml = origMinor!=null ? `<span class="was">${money(origMinor,d.currency)}</span>` : '';
-  const priceHtml = d.price_minor!=null
-    ? `<span class="price" style="color:${priceColor(d.price_minor)}">${money(d.price_minor,d.currency)}</span>${wasHtml}${addon?`<span class="was" style="text-decoration:none">${addon}</span>`:''}`
+  const priceHtml = priceMinor!=null
+    ? `<span class="price" style="color:${priceColor(priceMinor)}">${money(priceMinor,d.currency)}</span>${wasHtml}${addon?`<span class="was" style="text-decoration:none">${addon}</span>`:''}`
     : `<span class="price" style="font-size:13px;color:#b6bbc4">${d.headline?esc(d.headline):'menu deal'}</span>${wasHtml}`;
   const plus = (d.is_plus || d.is_wolt_plus) ? `<span class="wp ${d.provider}" role="img" aria-label="${provName(d.provider)}+ subscription deal" title="${provName(d.provider)}+ subscription deal"><img class="provlogo" src="/logos/${d.provider}.png" alt="" onerror="this.remove()">+</span>` : '';
   // Venue-level deals (Bolt: whole-menu discount, no dish) render consistently:
