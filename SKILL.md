@@ -31,12 +31,12 @@ The browser report is the product — don't dump CLI text unless the user explic
 asks for it. On `/deal-radar [address]`:
 
 ```bash
-# Long-lived (scans, then stays up for browsing) → run in the BACKGROUND.
+# Long-lived (scans, then stays up for browsing): run it as a background command.
 # Pass the user's address as --address; omit it to use the saved work_address.
 node ~/.claude/skills/deal-radar/scripts/serve.mjs --address Home > /tmp/deal-radar.log 2>&1 &
 ```
 
-Then read `/tmp/deal-radar.log` until the boot line appears and give the user the URL:
+Then read the background command's output (or the log it writes) until the boot line appears and give the user the URL:
 
 ```
 Deal Radar live report → http://localhost:8765
