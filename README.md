@@ -23,7 +23,7 @@ node bin/import-tokens.mjs wolt '<paste>'  # saves it to ~/.config/deal-radar
 node scripts/serve.mjs --address Home      # → http://localhost:8765
 ```
 
-![The live report: Bolt, Foody and Wolt deals side by side in one ranked grid, each card showing the real dish, its discounted price and the price it was before](docs/report.png)
+![The live report: Foody, Wolt and Bolt deals in one ranked grid. Each card shows the real dish, its discounted price, the old price, and a tag such as "2 for 1" or "2 for €13.50"](docs/report.png)
 
 ## What it does
 
@@ -33,12 +33,21 @@ node scripts/serve.mjs --address Home      # → http://localhost:8765
   price — not "up to 50% off" on a venue tile.
 - **Ranked by real discount**, in 10-point bands, with subscription deals
   (W+/Bolt+/Foody+) first inside each band.
+- **Multi-item deals, priced right.** "2 for 1", "Buy 2", "Any 2 pastas for
+  €13.50" and meal bundles get their own tag, and the price is for the whole
+  bundle, not one piece. Open **What's in it** on a Foody bundle to see what you
+  can pick.
+- **Deals with hours.** Lunch-only dishes and campaigns that end soon show a
+  clock tag with a countdown. Deals you cannot order right now move behind a
+  **Not now** filter instead of cluttering the grid.
 - **Filters that know what food is.** One chip for healthy or fast food, a
   category breakdown under it, sliders for price, delivery time and rating, and
   drinks/alcohol off by default because a €249 brandy is not lunch.
 - **Deliver-to switching** from your saved addresses or a pin on the map,
   without restarting anything.
 - **Your own order history**, exported and browsable — see below.
+- **Light or dark**, following your system or picked from the sun icon. Works on
+  a phone too.
 
 ## Setup
 
@@ -106,22 +115,44 @@ node scripts/serve.mjs --address Home --port 9000 --timeout 30
 node scripts/serve.mjs --address Home --no-bolt --no-foody     # Wolt only
 ```
 
-The server stops itself after an hour, or on the 🛑 button. ↻ rescans in place;
-drag the map pin to scan somewhere else.
+The server stops itself after an hour, or on **Stop server**. **Rescan** scans
+again in place; **Pick on map** scans somewhere else. Add `?theme=dark` or
+`?theme=light` to the URL to force a theme.
+
+<p align="center">
+  <img src="docs/dark.png" width="68%" alt="The same report in dark mode">
+  <img src="docs/phone.png" width="24%" alt="The report on a phone: two cards per row, filters behind one button">
+</p>
 
 ### Filters
 
-![The filters menu with the Healthy food chip active: it has ticked every healthy category, and the deal count has dropped from 220 to 92](docs/filters.png)
+![The filters panel: group by, apps with deal counts, meal type, cuisines and a price slider](docs/filters.png)
 
-Everything lives in one menu with a badge counting active selections, and your
-picks persist in the browser.
+Everything lives in one panel: grouping, apps, meal type, cuisines, sliders
+for price, delivery time and rating, and switches for drinks, alcohol and
+**Not now** deals. Your picks persist in the browser.
 
 ### Grouping across apps
 
-![Grouped by venue across apps: one header for Stathis Grill House showing Foody at 51% and Wolt at 50% side by side, with that venue's deals from both apps underneath](docs/cross-app.png)
+![Grouped by venue across apps: one header per restaurant with each app's best discount side by side, for example Foody 51%, Wolt 50% and Bolt 20% for the same burger place, and that venue's deals from all apps underneath](docs/cross-app.png)
 
 Ordering from the same place on the app that happens to be cheaper today is most
 of the value here, so venues listed on more than one app float to the top.
+
+### Bundles and time-limited deals
+
+![A Foody "Get any 2 pastas for €13.50" bundle opened with What's in it: the panel lists the pastas you can pick, two of them, each with its normal price](docs/bundle.png)
+
+A bundle card's **What's in it** button lists each step of the offer ("pick 2")
+with the dishes and their normal prices. On a Bolt whole-menu deal, **Prices**
+shows the menu with the discount already applied.
+
+![Left: three pizzeria dishes on a weekday afternoon offer with an "Ends in 2h 24m" tag. Right: lunch-only taco deals, greyed out with a "Not now" tag and their 11:30–16:00 hours](docs/timed.png)
+
+A deal that closes within three hours counts down on its card and moves up the
+list a little. A lunch special scanned in the morning shows its hours, and once
+lunch is over it fades to **Not now** and leaves the grid unless you turn on
+that filter.
 
 ### Text mode
 
@@ -163,9 +194,9 @@ participant's items and share, so a dinner for six is still six baskets rather
 than one anonymous total. Every response is cached per order, so an interrupted
 run resumes for free and the next one only fetches what is new.
 
-Open **🧾 Order history** in the report (or `/history`) to search and sort your
+Open **Order history** in the report (or `/history`) to search and sort your
 orders, expand one for its basket split by person, and see spend by month. The
-**⇩ Export** button runs the exporter from the browser and streams its progress
+**Export** button runs the exporter from the browser and streams its progress
 into the status bar. Nothing is trimmed on the way to the page — it is handed
 the export exactly as saved.
 
@@ -185,9 +216,15 @@ over €25") go through a parser; whatever it can't read gets logged to
 Non-food is filtered twice — first by the venue's vertical (restaurants only),
 then by item name — both driven by `banlist.json`.
 
+For each item the scanner also reads its weekly hours, and for each campaign
+its end date and hours, so a lunch special found at 11:30 is not offered at
+18:00.
+
 Wolt's API tops out around 6.6 requests/second no matter how much concurrency
-you throw at it, so every request goes through a global rate gate. A full scan
-of ~180 venues takes roughly a minute and a half.
+you throw at it, so every request goes through a global rate gate. Campaigns
+(the "2 for 1" and "-30% with W+" deals) come from a separate endpoint with a
+much lower limit, paced on its own. A full scan of 150 venues takes about four
+minutes; cards stream in while it runs.
 
 ## As a Claude Code skill
 
