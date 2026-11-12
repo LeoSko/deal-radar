@@ -20,6 +20,7 @@ import { woltFetch } from "../lib/fetch.mjs";
 import { loadAuth } from "../lib/auth.mjs";
 import { configPath } from "../lib/config.mjs";
 import { boltVenueMenu } from "../lib/bolt-menu.mjs";
+import { foodyOfferDetail } from "../lib/foody-offer.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -72,7 +73,9 @@ async function loadPlaces() {
   try {
     const raw = JSON.parse(readFileSync(configPath("places.json"), "utf8"));
     return raw.map((p, i) => ({ id: p.id || `p${i}`, label: p.label, lat: p.lat, lng: p.lng }));
-  } catch {}
+  } catch (e) {
+    if (e.code !== "ENOENT") console.error(`places.json unreadable (${e.message}); using the Wolt address book`);
+  }
   try {
     const info = await woltFetch("addresses", {}, { auth: await loadAuth() });
     return (info.results || []).map((a, i) => {
@@ -111,11 +114,13 @@ let children = [];
 let gen = 0;            // bumped each (re)start; stale children's handlers no-op
 let doneProviders = new Set();
 let lastCoords = null;  // chosen delivery address (lat/lon) from the UI, reused across rescans
-const boltMenus = new Map();   // bolt venue id -> { venue_id, categories }, one read per venue
+// On-demand provider reads behind a card (Bolt menu, Foody offer tiers): one read per key
+// per process, because a running scan does not change a menu.
+const lookups = new Map();
 function startScan(coords) {
   if (coords) lastCoords = coords; else coords = lastCoords;
   const myGen = ++gen;
-  for (const c of children) { try { c.kill(); } catch {} }
+  for (const c of children) c.kill();
   children = [];
   doneProviders = new Set();
   buffer = [];
@@ -206,10 +211,10 @@ function startHistoryExport({ refetch } = {}) {
 }
 
 function shutdown() {
-  for (const c of children) { try { c.kill(); } catch {} }
-  try { historyChild?.kill(); } catch {}
-  for (const r of clients) { try { r.end(); } catch {} }
-  for (const r of historyClients) { try { r.end(); } catch {} }
+  for (const c of children) c.kill();
+  historyChild?.kill();
+  for (const r of clients) r.end();
+  for (const r of historyClients) r.end();
   server.close();
   process.exit(0);
 }
@@ -244,24 +249,20 @@ const server = http.createServer((req, res) => {
   }
   // Prices behind a Bolt whole-menu deal. The scan cannot carry one (the deal IS the
   // venue), so the card asks for the venue's menu on demand. Bolt returns the campaign
-  // already applied, so this route only relays what Bolt says. One read per venue per
-  // process: a running scan does not change a menu.
+  // already applied, so this route only relays what Bolt says.
   if (req.url.startsWith("/bolt-menu")) {
-    const id = new URL(req.url, "http://x").searchParams.get("venue_id") || "";
-    const reply = (code, obj) => {
-      res.writeHead(code, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(obj));
-    };
-    if (!id) { reply(400, { error: "venue_id required" }); return; }
-    const hit = boltMenus.get(id);
-    if (hit) { reply(200, hit); return; }
-    boltVenueMenu(id, lastCoords || {})
-      .then((categories) => {
-        const payload = { venue_id: id, categories };
-        boltMenus.set(id, payload);
-        reply(200, payload);
-      })
-      .catch((e) => reply(502, { error: e.message }));
+    const q = new URL(req.url, "http://x").searchParams;
+    const id = q.get("venue_id") || "";
+    if (!id) { replyJson(res, 400, { error: "venue_id required" }); return; }
+    lookup(res, `bolt:${id}`, async () => ({ venue_id: id, categories: await boltVenueMenu(id, lastCoords || {}) }));
+    return;
+  }
+  // What a Foody offer bundle holds: its tiers ("pick 2") and the items in each.
+  if (req.url.startsWith("/foody-offer")) {
+    const q = new URL(req.url, "http://x").searchParams;
+    const venueId = q.get("venue_id") || "", offerId = q.get("offer_id") || "";
+    if (!venueId || !offerId) { replyJson(res, 400, { error: "venue_id and offer_id required" }); return; }
+    lookup(res, `foody:${venueId}:${offerId}`, () => foodyOfferDetail({ venueId, offerId }));
     return;
   }
   if (req.url.startsWith("/history/export") && req.method === "POST") {
@@ -297,7 +298,8 @@ const server = http.createServer((req, res) => {
     }
     return;
   }
-  if (req.url === "/history") {
+  // A query string (?theme=dark) must not turn the history page into the report.
+  if (req.url.split("?")[0] === "/history") {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     try { res.end(readFileSync(join(PUBLIC_DIR, "history.html"))); }
     catch (e) { res.end(`<h1>public/history.html missing</h1><pre>${e.message}</pre>`); }
@@ -337,6 +339,17 @@ const server = http.createServer((req, res) => {
   try { res.end(readFileSync(PAGE_PATH)); }
   catch (e) { res.end(`<h1>public/report.html missing</h1><pre>${e.message}</pre>`); }
 });
+function replyJson(res, code, obj) {
+  res.writeHead(code, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(obj));
+}
+// A provider read, cached on success; a failure says why and is retried next time.
+function lookup(res, key, load) {
+  if (lookups.has(key)) { replyJson(res, 200, lookups.get(key)); return; }
+  load()
+    .then((payload) => { lookups.set(key, payload); replyJson(res, 200, payload); })
+    .catch((e) => replyJson(res, 502, { error: e.message }));
+}
 const PUBLIC_DIR = join(HERE, "public");
 const PAGE_PATH = join(PUBLIC_DIR, "report.html");
 const MIME = { ".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml", ".png": "image/png" };
