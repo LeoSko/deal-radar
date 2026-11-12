@@ -1,105 +1,115 @@
 <!doctype html>
 <html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Deal Radar — order history</title>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Order history · Deal Radar</title>
+<!-- Theme before the CSS paints: a pinned theme never flashes the other one. ?theme=light|dark|system sets it and remembers it. -->
+<script>(function(){var d=document.documentElement;function st(f){try{return f()}catch(e){return null}}var t=st(function(){return localStorage.getItem("deal_radar_theme")});var q=new URLSearchParams(location.search).get("theme");if(q==="light"||q==="dark"||q==="system"){t=q==="system"?null:q;st(function(){return t?localStorage.setItem("deal_radar_theme",t):localStorage.removeItem("deal_radar_theme")})}if(t==="light"||t==="dark")d.setAttribute("data-theme",t)})();</script>
+<meta name="color-scheme" content="light dark">
 <link rel="icon" type="image/svg+xml" href="/logos/deal-radar.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="/public/app.css">
 <style>
-/* Page-local layout: the deals report is a card grid, this is a table + stats. */
-main.hist { padding: 20px; max-width: 1180px; margin: 0 auto; }
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-3); margin-bottom: var(--space-5); }
-.stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-3) var(--space-4); }
-.stat .k { color: var(--text-muted); font-size: 12px; }
-.stat .v { font-size: 20px; font-weight: 650; margin-top: 2px; overflow-wrap: anywhere; }
-.stat .v small { display: block; font-size: 12px; font-weight: 400; color: var(--text-muted); margin-top: 2px; }
-
-.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-4); margin-bottom: var(--space-5); }
-.panel h2 { margin: 0 0 var(--space-3); font-size: 14px; font-weight: 650; }
+/* Page-local layout: the deals report is a card grid, this is a stat strip + a table. */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--s-3); margin-bottom: var(--s-6); }
+.stat { min-width: 0; padding: var(--s-4); }
+.stat .k { color: var(--text-3); font-size: var(--fs-xs); line-height: var(--lh-xs); font-weight: var(--fw-medium); }
+.stat .v { margin-top: var(--s-1); font-size: var(--fs-xl); line-height: var(--lh-xl); font-weight: var(--fw-bold); letter-spacing: -.02em;
+           font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.stat .v small { display: block; margin-top: 2px; color: var(--text-2); font-size: var(--fs-sm); line-height: var(--lh-sm); font-weight: var(--fw-regular); letter-spacing: 0; }
+main > .panel { margin-bottom: var(--s-6); }
+.panel > h2 { padding: var(--s-4) var(--s-5) 0; }
+.panel > h2 .muted { font-weight: var(--fw-regular); }
 /* Year ticks sit under the first bar of each year and would be cut off at the
    chart's edges, so the row reserves room for half a label on each side. */
-.months { display: flex; align-items: flex-end; gap: 3px; height: 120px; overflow-x: auto; overflow-y: hidden;
-          padding: 0 14px 18px; }
-.months .m { flex: 1 1 10px; min-width: 6px; background: linear-gradient(180deg, var(--accent), var(--accent-2)); border-radius: 3px 3px 0 0; position: relative; }
-.months .m:hover { filter: brightness(1.25); }
-.months .m span { position: absolute; bottom: -16px; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--text-muted); white-space: nowrap; }
-
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
-/* Sticky column headers park directly under the page header. --hdr-h is kept in
-   sync with the real header height (it changes as the toolbar wraps), and the
-   table must NOT sit in an overflow container or sticky would resolve against
-   that scrollport instead of the viewport and scroll away with the page. */
-th { color: var(--text-muted); font-weight: 600; font-size: 12px; position: sticky; top: var(--hdr-h, 147px);
-     z-index: 1; background: var(--surface); cursor: pointer; white-space: nowrap; box-shadow: 0 1px 0 var(--border); }
-tr.order { scroll-margin-top: calc(var(--hdr-h, 147px) + 40px); }
+.months { display: flex; align-items: flex-end; gap: 3px; height: 140px; overflow-x: auto; overflow-y: hidden; padding: var(--s-4) var(--s-5) 22px; }
+.months .m { flex: 1 1 10px; min-width: 6px; background: var(--accent-border); border-radius: 3px 3px 0 0; position: relative; }
+.months .m:hover { background: var(--accent); }
+.months .m span { position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--text-3); white-space: nowrap; }
+.hsearch { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-3) 0; }
+table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+th, td { text-align: left; padding: var(--s-2) var(--s-4); border-bottom: 1px solid var(--border); vertical-align: top; }
+/* Sticky column headers park directly under the top bar. The table must NOT sit in an
+   overflow container, or sticky would resolve against that scrollport instead. */
+th { position: sticky; top: var(--nav-h); z-index: 1; height: 36px; vertical-align: middle; background: var(--surface-2); color: var(--text-3);
+     font-size: var(--fs-xs); font-weight: var(--fw-medium); cursor: pointer; white-space: nowrap; }
+th:first-child { border-top-left-radius: var(--r-lg); } th:last-child { border-top-right-radius: var(--r-lg); }
+tr.order { cursor: pointer; scroll-margin-top: calc(var(--nav-h) + 40px); }
+tr.order:hover td { background: var(--surface-2); }
 th[aria-sort="descending"]::after { content: " ↓"; } th[aria-sort="ascending"]::after { content: " ↑"; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-td:nth-child(2) { overflow-wrap: anywhere; }  /* venue names can be one long token */
-tr.order:hover { background: var(--surface-2); }
-tr.order { cursor: pointer; }
-.items { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
-tr.detail td { background: var(--surface-2); color: var(--text-muted); font-size: 12px; }
+td:nth-child(2) { overflow-wrap: anywhere; font-weight: var(--fw-medium); }  /* venue names can be one long token */
+.items { color: var(--text-3); font-size: var(--fs-xs); font-weight: var(--fw-regular); margin-top: 2px; }
+tr.detail td { background: var(--surface-2); color: var(--text-2); font-size: var(--fs-xs); }
 tr.detail ul { margin: 0; padding-left: 18px; } tr.detail li { margin: 2px 0; }
-.rawjson { margin-top: var(--space-2); }
-.rawjson summary { cursor: pointer; color: var(--accent-2); }
-/* Long JSON lines would set the cell's min-content width and push the whole
-   table past the viewport, so they wrap instead of scrolling sideways. */
-.rawjson pre { max-height: 320px; overflow-y: auto; background: var(--bg); border: 1px solid var(--border);
-                border-radius: var(--radius-md); padding: var(--space-2); margin: var(--space-2) 0 0; font-size: 11px;
-                white-space: pre-wrap; overflow-wrap: anywhere; }
-.badge { display: inline-block; padding: 1px 6px; border-radius: var(--radius-pill); font-size: 11px; border: 1px solid var(--border-strong); white-space: nowrap; }
-.badge.rejected, .badge.deferred_payment_failed { color: var(--danger); border-color: #5a2327; }
-.badge.grp { color: var(--accent); border-color: #2c5348; }
-.empty-state { text-align: center; color: var(--text-muted); padding: 60px 20px; }
-/* Listing has no known total — a frozen sliver reads as "stuck", so sweep it. */
-.bar.indeterminate > i { width: 30% !important; animation: sweep 1.4s ease-in-out infinite; }
-@keyframes sweep { 0% { margin-left: -30% } 100% { margin-left: 100% } }
-@media (prefers-reduced-motion: reduce) { .bar.indeterminate > i { animation: none; width: 100% !important; opacity: .5; } }
-.morerow { text-align: center; padding: var(--space-3) 0 0; }
+.rawjson { margin-top: var(--s-2); }
+.rawjson summary { cursor: pointer; color: var(--accent-text); }
+/* Long JSON lines would set the cell's min-content width and push the table past the
+   viewport, so they wrap instead of scrolling sideways. */
+.rawjson pre { max-height: 320px; overflow-y: auto; background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-md);
+               padding: var(--s-2); margin: var(--s-2) 0 0; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* status: a 6px dot + a word, never a fill */
+.badge { height: 22px; padding: 0 var(--s-2); display: inline-flex; align-items: center; gap: 6px; border-radius: var(--r-pill);
+         border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2); font-size: var(--fs-xs); font-weight: var(--fw-medium); white-space: nowrap; }
+.badge::before { content: ""; width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--text-3); }
+.badge.delivered::before { background: var(--positive); }
+.badge.rejected::before, .badge.deferred_payment_failed::before { background: var(--danger); }
+.badge.grp::before { display: none; }
+.badge.grp { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent-border); }
+.empty-state { text-align: center; color: var(--text-2); padding: 48px 20px; }
+.morerow { text-align: center; padding: var(--s-3) 0; }
 /* Narrow screens drop the two derived columns rather than growing a horizontal
-   scrollbar — the counts stay reachable by expanding a row. */
-@media (max-width: 720px) {
-  main.hist { padding: 12px; }
-  th.opt, td.opt { display: none; }
-}
-/* Wide enough that a date never needs two lines; below this it may wrap rather
-   than force the table past the viewport. */
-@media (min-width: 721px) {
-  td:first-child, th:first-child { white-space: nowrap; }
-}
+   scrollbar; the counts stay reachable by expanding a row. */
+@media (max-width: 720px) { th.opt, td.opt { display: none; } th, td { padding-inline: var(--s-2); } }
+/* Wide enough that a date never needs two lines; below this it may wrap. */
+@media (min-width: 721px) { td:first-child, th:first-child { white-space: nowrap; } }
 </style>
 </head>
 <body>
-<a class="skip sr-only" href="#main">Skip to content</a>
-<header>
-  <div class="top">
-    <h1><img class="applogo" src="/logos/deal-radar.svg" alt="">Order history <span class="sub" id="sub">loading…</span></h1>
-    <div class="btns">
-      <a class="btn" href="/" title="Back to the deal scan">← Deals</a>
-      <button class="btn" id="export" title="Fetch new orders (cached ones are reused)">⇩ Export</button>
-      <button class="btn" id="refetch" title="Re-download every order, ignoring the cache">↻ Re-fetch all</button>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <div class="wrap topbar">
+    <a class="brand" href="/"><img class="brand-mark" src="/logos/deal-radar.svg" alt=""><span class="brand-name">Deal Radar</span></a>
+    <nav id="topnav" aria-label="Main">
+      <a href="/" title="Deals"><svg class="ic" aria-hidden="true"><use href="/public/icons.svg#i-tag"/></svg><span>Deals</span></a>
+      <a href="/history" title="Your past Wolt orders"><svg class="ic" aria-hidden="true"><use href="/public/icons.svg#i-hist"/></svg><span>Order history</span></a>
+    </nav>
+    <div class="topright">
+      <button class="iconbtn" type="button" aria-haspopup="menu" aria-controls="thememenu" aria-expanded="false" aria-label="Theme" title="Theme"><svg class="ic" aria-hidden="true"><use href="/public/icons.svg#i-sun"/></svg></button>
     </div>
   </div>
-  <div class="bar"><i id="barfill"></i></div>
-  <div class="meta">
-    <span><span class="dot done" id="dot"></span><span id="status" role="status" aria-live="polite">idle</span></span>
-    <span id="pace"></span>
-    <span id="count" role="status" aria-live="polite"></span>
-  </div>
-  <div class="controls toolbar">
-    <div class="searchwrap">
-      <input class="search" id="search" type="search" aria-label="Search venues and dishes" placeholder="🔍 Search venues, dishes…" autocomplete="off">
-      <button class="search-x" id="search-x" type="button" aria-label="Clear search" title="Clear search" style="display:none">✕</button>
-    </div>
-  </div>
+  <div class="scanbar" id="scanbar"><i id="barfill"></i></div>
 </header>
-
-<main class="hist" id="main">
-  <h1 class="sr-only">Wolt order history</h1>
+<div class="menu" id="thememenu" role="menu" aria-label="Theme" hidden>
+  <div class="ms">Theme</div>
+  <div class="seg" role="group" aria-label="Theme">
+    <button type="button" data-theme-set="system" aria-pressed="false"><svg class="ic sm" aria-hidden="true"><use href="/public/icons.svg#i-monitor"/></svg><span>System</span></button>
+    <button type="button" data-theme-set="light" aria-pressed="false"><svg class="ic sm" aria-hidden="true"><use href="/public/icons.svg#i-sun"/></svg><span>Light</span></button>
+    <button type="button" data-theme-set="dark" aria-pressed="false"><svg class="ic sm" aria-hidden="true"><use href="/public/icons.svg#i-moon"/></svg><span>Dark</span></button>
+  </div>
+</div>
+<main class="wrap" id="main">
+  <div class="pagehead">
+    <div>
+      <h1>Order history <span class="h1sub" id="sub">loading…</span></h1>
+      <div class="sub"><span id="status-wrap" class="sub"><span class="sdot off" id="dot"></span><span id="status" role="status" aria-live="polite">idle</span></span>
+        <span id="pace" class="muted"></span><span id="count" class="muted" role="status" aria-live="polite"></span></div>
+    </div>
+    <div class="pageacts">
+      <button class="btn primary" id="export" type="button" title="Fetch new orders (cached ones are reused)"><svg class="ic" aria-hidden="true"><use href="/public/icons.svg#i-download"/></svg>Export</button>
+      <button class="btn" id="refetch" type="button" title="Re-download every order, ignoring the cache"><svg class="ic" aria-hidden="true"><use href="/public/icons.svg#i-refresh"/></svg>Re-fetch all</button>
+    </div>
+  </div>
   <div class="stats" id="stats"></div>
   <div class="panel" id="monthpanel" style="display:none">
     <h2>Spend by month <span class="muted" id="monthcur"></span></h2>
     <div class="months" id="months"></div>
+  </div>
+  <div class="hsearch">
+    <label class="field searchwrap"><svg class="ic" aria-hidden="true"><use href="/public/icons.svg#i-search"/></svg>
+      <input class="search" id="search" type="search" aria-label="Search venues and dishes" placeholder="Search venues, dishes" autocomplete="off">
+      <button class="iconbtn search-x" id="search-x" type="button" aria-label="Clear search" title="Clear search" style="display:none"><svg class="ic sm" aria-hidden="true"><use href="/public/icons.svg#i-x"/></svg></button>
+    </label>
   </div>
   <div class="panel">
     <table>
@@ -114,13 +124,13 @@ tr.detail ul { margin: 0; padding-left: 18px; } tr.detail li { margin: 2px 0; }
       </tr></thead>
       <tbody id="rows"></tbody>
     </table>
-    <div class="empty-state" id="empty">No export yet — press <b>⇩ Export</b> to pull your order history.</div>
+    <div class="empty-state" id="empty">No export yet. Press <b>Export</b> to pull your order history.</div>
     <div class="morerow" id="morerow" style="display:none">
       <button class="btn sm" id="more">Show more</button> <span class="muted" id="shown"></span>
     </div>
   </div>
 </main>
-
+<script type="module" src="/public/shell.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 let ROWS = [], META = null, sortKey = "ts", sortDir = -1, query = "";
@@ -134,12 +144,12 @@ const PHASES = {
 };
 function renderProgress(s) {
   const running = s.phase === "listing" || s.phase === "details";
-  $("dot").className = "dot" + (running ? "" : " done");
+  $("dot").className = "sdot" + (running ? " live" : " off");
   $("export").disabled = running; $("refetch").disabled = running;
   const known = s.phase === "details" || s.phase === "done";
   const pct = known && s.total ? Math.round((s.done || 0) / s.total * 100) : 0;
-  document.querySelector(".bar").classList.toggle("indeterminate", running && !known);
-  $("barfill").style.width = (s.phase === "done" ? 100 : pct) + "%";
+  $("scanbar").classList.toggle("indeterminate", running && !known);
+  $("barfill").style.width = (running ? pct : 0) + "%";
   let text = PHASES[s.phase] || s.phase;
   if (s.phase === "listing" && s.orders) text += ` ${s.orders} found`;
   if (s.phase === "details") text += ` ${s.done}/${s.total} (${pct}%)`;
@@ -241,7 +251,7 @@ function renderStats() {
   const top = [...venues.entries()].sort((a, b) => b[1] - a[1])[0];
   const ts = ROWS.map((r) => r.ts).filter(Boolean);
   const main = spend[0];
-  const stat = (k, v, sub) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}${sub ? ` <small>${sub}</small>` : ""}</div></div>`;
+  const stat = (k, v, sub) => `<div class="stat panel"><div class="k">${k}</div><div class="v">${v}${sub ? ` <small>${sub}</small>` : ""}</div></div>`;
   // A history that crosses borders carries several currencies. The dominant one
   // is the headline; the rest go underneath rather than into one long line that
   // wraps and drags every card's height up with it.
@@ -306,13 +316,13 @@ function renderRows() {
     return (typeof x === "string" ? x.localeCompare(y || "") : (x || 0) - (y || 0)) * sortDir;
   });
   $("empty").style.display = list.length ? "none" : "";
-  if (!ROWS.length) $("empty").innerHTML = "No export yet — press <b>⇩ Export</b> to pull your order history.";
+  if (!ROWS.length) $("empty").innerHTML = "No export yet. Press <b>Export</b> to pull your order history.";
   else if (!list.length) $("empty").textContent = "No orders match that search.";
   const page = list.slice(0, shown);
   $("rows").innerHTML = page.map((r) => `
     <tr class="order" data-id="${r.id}" tabindex="0">
       <td>${day(r.ts)}</td>
-      <td>${esc(r.venue)}${r.group ? ` <span class="badge grp" title="${esc(r.group.name || "group order")} · ${r.group.members} people">👥 ${r.group.members}</span>` : ""}
+      <td>${esc(r.venue)}${r.group ? ` <span class="badge grp" title="${esc(r.group.name || "group order")} · ${r.group.members} people">group of ${r.group.members}</span>` : ""}
         <div class="items">${esc(r.items.slice(0, 3).map((i) => `${i.count}× ${i.name}`).join(", "))}${r.items.length > 3 ? ` +${r.items.length - 3}` : ""}</div></td>
       <td class="num opt">${r.items.length}</td>
       <td class="num opt">${r.discount ? money(r.discount, r.currency) : "—"}</td>
@@ -376,14 +386,6 @@ $("search").oninput = (e) => {
   renderRows();
 };
 $("search-x").onclick = () => { $("search").value = ""; query = ""; $("search-x").style.display = "none"; shown = PAGE; renderRows(); };
-
-// The header grows and shrinks as its toolbar wraps; the sticky column headers
-// park under whatever it currently measures.
-const header = document.querySelector("header");
-const syncHeaderHeight = () =>
-  document.documentElement.style.setProperty("--hdr-h", Math.round(header.getBoundingClientRect().height) + "px");
-new ResizeObserver(syncHeaderHeight).observe(header);
-syncHeaderHeight();
 
 load();
 </script>
