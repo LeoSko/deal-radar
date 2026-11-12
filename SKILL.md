@@ -230,6 +230,8 @@ order's untouched JSON behind a "raw order JSON" toggle in the expanded row.
 | `--scan-limit <n>` | 150 | Hard cap on total venues scanned (promo-tagged first, then blind-closest fill the rest) |
 | `--scan-concurrency <n>` | 12 | Venue worker-pool size. Sized to keep `--scan-rps` saturated even through slow (large grocery) responses; the rate gate — not this — bounds req/s, so this never causes 429s. |
 | `--scan-rps <f>` | 6.4 | Global requests/sec cap — the real throttle. Measured Wolt API ceiling is ~6.6 req/s; default is that −2%. Lower if you start seeing "venues failed"; raising it past ~6.6 gets you 429'd. |
+| `--dyn-rps <f>` | 0.65 | Pace of the campaign (venue-dynamic) endpoint, which has its own, far lower per-account cap. Raising it loses campaign deals to 429s (reported as `SCAN-HOLE`). |
+| `--all-items` | — | Also emit the non-discounted menu items (`discount_percentage: null`), so a full menu is searchable. Works for Wolt, Bolt and Foody. |
 | `--address <alias>` | `work_address` from auth.json | Substring match on a saved Wolt address alias (e.g. `Home`, `Office`, `Anna's`). One-off override. |
 | `--list-addresses` | — | Dump all saved addresses + coords, then exit. |
 | `--lat <f> --lon <f>` | — | Raw coord override (skips saved-address lookup). |
@@ -260,9 +262,15 @@ order's untouched JSON behind a "raw order JSON" toggle in the expanded row.
    **~6.6 req/s** regardless of concurrency — anything faster returns HTTP 429.
    So requests/sec, not the worker count, is the real governor. Every request is
    paced through a global rate gate to `--scan-rps` (default **6.4**, the measured
-   ceiling −2%); the rare 429 that slips through is retried with backoff. A full
-   ~180-venue scan (≈360 requests) lands ~60–90s. Raising `--scan-concurrency`
-   beyond what saturates the rate cap does **not** help — it just thrashes on 429s.
+   ceiling −2%); the rare 429 that slips through is retried with backoff. Raising
+   `--scan-concurrency` beyond what saturates the rate cap does **not** help — it
+   just thrashes on 429s.
+
+   The campaign endpoint (venue-dynamic) has its own cap per account: a burst of
+   ~18 requests goes through, then every request 429s for tens of seconds, while
+   one request per 1.5 s runs clean. It is paced to `--dyn-rps` (default **0.65**),
+   so a full 150-venue scan takes about four minutes. Venues whose campaigns still
+   fail are asked once more after a pause; the rest are reported as `SCAN-HOLE`.
 
 ## Self-improving badge parser
 
@@ -270,7 +278,7 @@ Whenever a venue badge text doesn't parse to a discount % **and the scan couldn'
 derive one either**, the script appends a classified record to
 `~/.config/deal-radar/unparsed_promos.jsonl` (kind: `fixed_price`,
 `fixed_amount_off`, `named_offer`, `unknown`). Review with `--show-unparsed`. New
-parser rules go in `parsePromoPct` (deals.mjs); new non-food signals go in
+parser rules go in `parsePromoPct` (scripts/wolt/promo-badges.mjs); new non-food signals go in
 `banlist.json`.
 
 Kinds in `IGNORABLE_BADGE_KINDS` (`delivery_fee`, `schedule_label`,
