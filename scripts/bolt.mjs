@@ -9,19 +9,21 @@
 //   node bolt.mjs --json           # unified deal objects
 //   node bolt.mjs --stream         # NDJSON: start / deal / progress / done
 //   node bolt.mjs --min-discount 20
+//   node bolt.mjs --all-items      # also list the venues without a discount
 //   node bolt.mjs --set-refresh eyJ...   # store a new ~yearly refresh token (rare: on expiry/logout)
 import { readFile, writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { realpathSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { configPath } from "../lib/config.mjs";
+import { venueKey } from "../lib/venue-key.mjs";
+import { jwtExp } from "../lib/jwt.mjs";
+import { cliArgs, feedScanArgs, runIfMain } from "../lib/cli.mjs";
+import { BOLT_API, BOLT_SITE } from "../lib/endpoints.mjs";
 
 const AUTH_PATH = configPath("bolt_auth.json");
 
 // ── Bolt Food API topology (non-secret, stable) — embedded so setup needs ONLY a
 // refresh token. deviceId/session_id are generated on first run; coords + city_id
 // are derived live from the account's saved delivery address (getDeliveryLocation).
-const BASE = "https://deliveryuser.live.boltsvc.net";
 const HOME_PATH = "/deliveryClient/getScreenContent";   // venue feed (GET, screen_id+coords+city_id)
 const LOCATION_PATH = "/deliveryClient/v2/getDeliveryLocation";  // account address → lat/lng/city_id
 const ACCESS_PATH = "/profile/eater/auth/getAccessToken";        // mint ~1h access token from refresh
@@ -29,15 +31,10 @@ const SCREEN_ID = "870006";                              // food home screen
 const STATIC_PARAMS = { version: "FW.1.112", language: "en-US", device_name: "web", device_os_version: "web", deviceType: "web" };
 
 function parseArgs() {
-  const a = process.argv.slice(2);
-  const flag = (n, d = null) => { const i = a.indexOf(n); return i < 0 ? d : a[i + 1]; };
+  const args = cliArgs();
   return {
-    json: a.includes("--json"),
-    stream: a.includes("--stream"),
-    minDiscount: parseFloat(flag("--min-discount", "15")),
-    limit: parseInt(flag("--limit", "5000"), 10),           // effectively no cap
-    lat: flag("--lat"), lon: flag("--lon"),  // override auth coords (chosen address)
-    setRefresh: flag("--set-refresh"),       // store a new long-lived refresh token, then exit
+    ...feedScanArgs(args),
+    setRefresh: args.flag("--set-refresh"),       // store a new long-lived refresh token, then exit
   };
 }
 
@@ -97,14 +94,6 @@ function parseLabelPct(text) {
   return m ? parseInt(m[1], 10) : null;
 }
 
-// Join key across providers: first two significant words, normalized. Drops
-// branch/location noise so "Burger King Makariou" (Wolt) ≈ "Burger King" (Bolt).
-function venueKey(name) {
-  return String(name || "").toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim()
-    .split(" ").filter(Boolean).slice(0, 2).join(" ");
-}
-
 function secsToEta(eta) {
   const lo = eta?.delivery?.min, hi = eta?.delivery?.max;
   if (lo == null || hi == null) return null;
@@ -124,7 +113,7 @@ function providerToDeal(p, auth) {
   const headline = labels.find((l) => l?.text)?.text || null;
   const ratingNative = p.rating?.value ? parseFloat(p.rating.value) : null;  // /5
   const cover = p.images?.cover || null;
-  const url = p.slug ? `https://food.bolt.eu/en/${auth.city_slug}/p/${p.slug}` : null;
+  const url = p.slug ? `${BOLT_SITE}/en/${auth.city_slug}/p/${p.slug}` : null;
   // Bolt+ (subscription) deal — Bolt's menu discounts are mostly Plus-gated.
   const boltPlus = p.icon_keys?.name_suffix === "bolt_plus" || (p.icon_keys?.name_suffixes || []).includes("bolt_plus");
   return {
@@ -154,19 +143,14 @@ function providerToDeal(p, auth) {
   };
 }
 
-function jwtExp(jwt) {
-  try { return JSON.parse(Buffer.from(String(jwt).split(".")[1], "base64").toString()).exp || 0; }
-  catch { return 0; }
-}
-
 // Mint a fresh ~1h access token from the long-lived (~year) refresh token saved
 // in bolt_auth.json — the same /getAccessToken call the web app makes on expiry
 // (Bearer = refresh token, empty body). Captured once from a logged-in browser.
 async function refreshAccessToken(auth) {
   const cp = new URLSearchParams(commonParams(auth)).toString();
-  const res = await fetch(BASE + ACCESS_PATH + "?" + cp, {
+  const res = await fetch(BOLT_API + ACCESS_PATH + "?" + cp, {
     method: "POST",
-    headers: { accept: "application/json", "content-type": "application/json", authorization: `Bearer ${auth.refresh_token}`, Referer: "https://food.bolt.eu/" },
+    headers: { accept: "application/json", "content-type": "application/json", authorization: `Bearer ${auth.refresh_token}`, Referer: `${BOLT_SITE}/` },
     body: "{}",
   });
   if (!res.ok) throw new Error(`getAccessToken HTTP ${res.status}`);
@@ -180,9 +164,9 @@ async function refreshAccessToken(auth) {
 // changed address in the app is followed automatically, nothing to re-capture.
 async function fetchLocation(auth) {
   const cp = new URLSearchParams(commonParams(auth)).toString();
-  const res = await fetch(BASE + LOCATION_PATH + "?" + cp, {
+  const res = await fetch(BOLT_API + LOCATION_PATH + "?" + cp, {
     method: "POST",
-    headers: { accept: "application/json", "content-type": "application/json", authorization: `Bearer ${auth.token}`, Referer: "https://food.bolt.eu/" },
+    headers: { accept: "application/json", "content-type": "application/json", authorization: `Bearer ${auth.token}`, Referer: `${BOLT_SITE}/` },
     body: "{}",
   });
   if (!res.ok) throw new Error(`getDeliveryLocation HTTP ${res.status}`);
@@ -227,8 +211,8 @@ async function loadHome(opts) {
   }
   const screenId = auth.home_screen_id || SCREEN_ID;
   const cp = new URLSearchParams(commonParams(auth)).toString();
-  const url = `${BASE}${HOME_PATH}?screen_id=${screenId}&delivery_lat=${lat}&delivery_lng=${lng}&city_id=${cityId}&${cp}`;
-  const res = await fetch(url, { headers: { accept: "*/*", authorization: `Bearer ${auth.token}`, Referer: "https://food.bolt.eu/" } });
+  const url = `${BOLT_API}${HOME_PATH}?screen_id=${screenId}&delivery_lat=${lat}&delivery_lng=${lng}&city_id=${cityId}&${cp}`;
+  const res = await fetch(url, { headers: { accept: "*/*", authorization: `Bearer ${auth.token}`, Referer: `${BOLT_SITE}/` } });
   if (!res.ok) {
     process.stderr.write(`Bolt home → HTTP ${res.status}; skipping (live data unavailable).\n`);
     return { auth, stale: true };
@@ -236,11 +220,14 @@ async function loadHome(opts) {
   return { home: await res.json(), auth };
 }
 
-function rankBolt(deals, minDiscount, limit) {
+function rankBolt(deals, minDiscount, limit, allItems = false) {
   return deals
-    .filter((d) => (d.discount_percentage || 0) >= minDiscount)
+    // always keep discounted venues; all-items mode ALSO keeps the rest as plain tiles
+    .filter((d) => (d.discount_percentage || 0) >= minDiscount || allItems)
+    // a non-discounted venue is a plain menu tile, not a "0% off" deal
+    .map((d) => (d.discount_percentage > 0 ? d : { ...d, discount_percentage: null }))
     .sort((a, b) =>
-      (b.discount_percentage - a.discount_percentage) ||
+      ((b.discount_percentage || 0) - (a.discount_percentage || 0)) ||
       ((b.rating10 || 0) - (a.rating10 || 0)))
     .slice(0, limit);
 }
@@ -275,12 +262,12 @@ async function main() {
   const open = Object.values(providers).filter((p) =>
     p.availability?.delivery?.instant === true && p.is_in_range !== false && !nonFood.has(String(p.id)));
   const all = open.map((p) => providerToDeal(p, auth));
-  const ranked = rankBolt(all, opts.minDiscount, opts.limit);
+  const ranked = rankBolt(all, opts.minDiscount, opts.limit, opts.allItems);
 
   if (opts.stream) {
     const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
     emit({ type: "start", address: `Bolt ${auth.city_slug}`, provider: "bolt" });
-    for (const d of ranked) emit({ type: "deal", deal: d });
+    for (const d of ranked) if (d.discount_percentage > 0) emit({ type: "deal", deal: d });   // the live stream stays deals-only
     emit({ type: "progress", done: 1, total: 1 });
     emit({ type: "done", deals: ranked, provider: "bolt" });
     return;
@@ -296,8 +283,6 @@ async function main() {
   }
 }
 
-if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
-  main().catch((e) => { console.error(e.stack || e.message || e); process.exit(1); });
-}
+runIfMain(import.meta.url, main);
 
 export { providerToDeal, parseLabelPct, venueKey, secsToEta };
