@@ -1,12 +1,11 @@
-#!/usr/bin/env node
 // Unit tests for the item_discount pricing logic — the % math the live scan
 // can't fully exercise (notably the min_quantity ≥ 2 "buy N" bundle branch,
-// which Wolt only intermittently ships). Run: node deals.test.mjs
+// which Wolt only intermittently ships). Run: npm test
+import { test as t } from "node:test";
 import assert from "node:assert/strict";
-import { computeItemDiscountDeal, campaignRequiredQty, isPlaceholderItemDiscount, classifyUnparsedBadge } from "./deals.mjs";
-
-let pass = 0;
-const t = (name, fn) => { fn(); pass++; console.log(`  ok  ${name}`); };
+import { computeItemDiscountDeal, campaignRequiredQty, isPlaceholderItemDiscount } from "./wolt/campaigns.mjs";
+import { classifyUnparsedBadge } from "./wolt/promo-badges.mjs";
+import { extractVenueDeals } from "./wolt/venue-deals.mjs";
 
 // ---- computeItemDiscountDeal -------------------------------------------------
 
@@ -132,4 +131,52 @@ t("delivery_fee: the '& €0 Del. Fees' brand-tie-in form", () => {
   assert.equal(classifyUnparsedBadge("Charalambides & €0 Del. Fees"), "delivery_fee");
 });
 
-console.log(`\n${pass} passed`);
+// ---- stacked campaigns -------------------------------------------------------
+// A venue campaign ("50% discount on selected items") on an item the venue already
+// marked down (€8.00, was €12.20) costs €4.00: 67% off the struck price, not 50%.
+
+t("a campaign on a marked-down item counts from the struck price", () => {
+  assert.deepEqual(computeItemDiscountDeal(800, { fraction: 0.5, wasMinor: 1220 }),
+    { price: 400, original: 1220, pct: 67, bundleQty: 1 });
+});
+
+t("an item with no markdown keeps its own price as the original", () => {
+  assert.deepEqual(computeItemDiscountDeal(1240, { fraction: 0.5 }),
+    { price: 620, original: 1240, pct: 50, bundleQty: 1 });
+});
+
+t("a flat bundle cut stacks on the struck price per unit", () => {
+  assert.deepEqual(computeItemDiscountDeal(500, { amount: 300, reqQty: 2, wasMinor: 600 }),
+    { price: 700, original: 1200, pct: 42, bundleQty: 2 });
+});
+
+// ---- free_items (BOGO) campaigns ---------------------------------------------
+
+const venue = { slug: "grill", name: "Grill House", id: "v1", currency: "EUR" };
+const bogo = (items) => ({ venue_raw: { discounts: [{ id: "c1", description: { title: "Buy 2 pay 1" }, conditions: {},
+  effects: { free_items: { buy: 1, get: 1, include: { items } } } }] } });
+
+t("a BOGO on an item that already bakes the BOGO into its markdown is skipped", () => {
+  const ass = { items: [{ id: "i1", name: "Loukaniko", price: 680, original_price: 1360 }] };
+  const deals = extractVenueDeals(venue, ass, bogo(["i1"]));
+  assert.equal(deals.filter((d) => d.badges.length).length, 0);
+  assert.equal(deals[0].price_minor, 680, "the markdown deal alone stays");
+});
+
+t("a BOGO on a plain item prices one piece at half", () => {
+  const ass = { items: [{ id: "i2", name: "Souvlaki", price: 900 }] };
+  const [d] = extractVenueDeals(venue, ass, bogo(["i2"]));
+  assert.equal(d.price_minor, 450);
+  assert.equal(d.discount_percentage, 50);
+  assert.equal(d.name, "Buy 2 pay 1 (Souvlaki)");
+});
+
+t("a buy-N bundle campaign names the bundle and prices the whole basket", () => {
+  const ass = { items: [{ id: "i3", name: "Big Burger", price: 550 }] };
+  const dyn = { venue_raw: { discounts: [{ id: "c2", description: { title: "Buy 1 get the second for €1" },
+    conditions: { basket_contains: [{ min_quantity: 2 }] }, effects: { item_discount: { amount_per_item: 450, include: { items: ["i3"] } } } }] } };
+  const [d] = extractVenueDeals(venue, ass, dyn);
+  assert.equal(d.name, "Buy 2 Big Burger — Buy 1 get the second for €1");
+  assert.equal(d.price_minor, 650);
+  assert.equal(d.original_minor, 1100);
+});
